@@ -983,3 +983,20 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+# -----------------------------------------------------------------------------
+# Vercel Serverless WSGI Entrypoint Compatibility
+# -----------------------------------------------------------------------------
+def handler(environ, start_response):
+    status = '200 OK'
+    response_headers = [('Content-Type', 'text/html; charset=utf-8')]
+    start_response(status, response_headers)
+    html_file = os.path.join(os.path.dirname(__file__), 'index.html')
+    if os.path.exists(html_file):
+        with open(html_file, 'rb') as f:
+            return [f.read()]
+    return [b"<h1>Question Bank Architect</h1><p>Developed by Eslam Abdelbadea</p>"]
+
+app = handler
+application = handler
+
