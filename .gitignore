@@ -1,0 +1,35 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Sensitive user config & API keys
+.api_key_config
+.env
+.env.local
+
+# Generated Excel test sheets and local user docs
+*.xlsx
+*.pdf
+*.docx
+uploaded_files/
+
+# Streamlit
+.streamlit/
+
+# Vercel
+.vercel/
+
+# OS metadata
+.DS_Store
+Thumbs.db
