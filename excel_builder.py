@@ -130,19 +130,19 @@ def add_training_program_sheet(
     ws.merge_cells('A3:A4')
     ws.merge_cells('B3:B4')
     ws.merge_cells('C3:C4')
-    ws.merge_cells('D3:D4')
-    ws.merge_cells('E3:E4')
-    ws.merge_cells('F3:G3')
-    ws.merge_cells('H3:H4')
+    ws.merge_cells('D3:E3')
+    ws.merge_cells('F3:F4')
+    ws.merge_cells('G3:H3')
+    ws.merge_cells('I3:I4')
 
     headers_3 = {
         'A3': 'الترم',
         'B3': 'اليوم',
         'C3': 'المحاضرة',
         'D3': 'اسم الموضوع',
-        'E3': 'عدد الساعات',
-        'F3': 'الصفحة في المرجع الموحد',
-        'H3': 'عدد الاسئلة'
+        'F3': 'عدد الساعات',
+        'G3': 'الصفحة في المرجع الموحد',
+        'I3': 'عدد الاسئلة'
     }
     for cell_id, text in headers_3.items():
         c = ws[cell_id]
@@ -152,9 +152,12 @@ def add_training_program_sheet(
         c.alignment = Alignment(horizontal='center', vertical='center')
         c.border = border_cell
 
-    ws['F4'].value = 'من'
-    ws['G4'].value = 'الي'
-    for c_id in ['F4', 'G4']:
+    ws['D4'].value = 'نظري'
+    ws['E4'].value = 'عملي'
+    ws['G4'].value = 'من'
+    ws['H4'].value = 'الي'
+
+    for c_id in ['D4', 'E4', 'G4', 'H4']:
         c = ws[c_id]
         c.font = font_header
         c.fill = header_fill
@@ -162,8 +165,8 @@ def add_training_program_sheet(
         c.border = border_cell
 
     for r in [3, 4]:
-        ws.row_dimensions[r].height = 25
-        for col in range(1, 9):
+        ws.row_dimensions[r].height = 26
+        for col in range(1, 10):
             ws.cell(r, col).border = border_cell
             if ws.cell(r, col).fill.fill_type is None:
                 ws.cell(r, col).fill = header_fill
@@ -182,6 +185,9 @@ def add_training_program_sheet(
     item_idx = 0
     term_start_row = current_row
 
+    theory_hrs_sum = 0.0
+    prac_hrs_sum = 0.0
+
     for day_num in range(1, days_count + 1):
         day_label = ARABIC_DAYS[day_num - 1] if day_num <= len(ARABIC_DAYS) else f'اليوم {day_num}'
         day_start_row = current_row
@@ -189,29 +195,44 @@ def add_training_program_sheet(
         for period_idx in range(1, 5):
             it = items[item_idx] if item_idx < n_items else None
             p_label = f'ف{period_idx}'
-            lec_title = it.get('lesson_name') or it.get('title') if it else f'موضوع تدريبي {item_idx + 1}'
+            
+            # Determine theory vs practical
+            if it and it.get('type') == 'prac':
+                th_val = '-'
+                pr_val = it.get('prac') or it.get('lesson_name') or it.get('title') or '-'
+                prac_hrs_sum += 2.0
+            elif it and it.get('type') == 'theory':
+                th_val = it.get('theory') or it.get('lesson_name') or it.get('title') or '-'
+                pr_val = '-'
+                theory_hrs_sum += 2.0
+            else:
+                th_val = (it.get('lesson_name') or it.get('title') if it else f'موضوع تدريبي {item_idx + 1}')
+                pr_val = '-'
+                theory_hrs_sum += 2.0
+
             hrs = 2.0
-            if it and 'page_from' in it and 'page_to' in it and it['page_from'] is not None:
-                p_from, p_to = it['page_from'], it['page_to']
-            elif it and 'p_from' in it and 'p_to' in it and it['p_from'] is not None:
+            if it and 'p_from' in it and 'p_to' in it and it['p_from'] is not None:
                 p_from, p_to = it['p_from'], it['p_to']
+            elif it and 'page_from' in it and 'page_to' in it and it['page_from'] is not None:
+                p_from, p_to = it['page_from'], it['page_to']
             else:
                 p_from, p_to = calc_page_range(item_idx + 1, n_items, total_pages)
             q_cnt = 25
 
             ws.cell(current_row, 3, value=p_label).alignment = Alignment(horizontal='center', vertical='center')
-            ws.cell(current_row, 4, value=lec_title).alignment = Alignment(horizontal='right', vertical='center')
-            ws.cell(current_row, 5, value=hrs).alignment = Alignment(horizontal='center', vertical='center')
-            ws.cell(current_row, 6, value=p_from).alignment = Alignment(horizontal='center', vertical='center')
-            ws.cell(current_row, 7, value=p_to).alignment = Alignment(horizontal='center', vertical='center')
-            ws.cell(current_row, 8, value=q_cnt).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 4, value=th_val).alignment = Alignment(horizontal='right' if th_val != '-' else 'center', vertical='center')
+            ws.cell(current_row, 5, value=pr_val).alignment = Alignment(horizontal='right' if pr_val != '-' else 'center', vertical='center')
+            ws.cell(current_row, 6, value=hrs).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 7, value=p_from).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 8, value=p_to).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 9, value=q_cnt).alignment = Alignment(horizontal='center', vertical='center')
 
-            for col in range(1, 9):
+            for col in range(1, 10):
                 c = ws.cell(current_row, col)
                 c.font = font_data
                 c.border = border_cell
 
-            ws.row_dimensions[current_row].height = 24
+            ws.row_dimensions[current_row].height = 25
             current_row += 1
             item_idx += 1
 
@@ -226,11 +247,11 @@ def add_training_program_sheet(
         # Midterm Exam row after midterm_day
         if day_num == midterm_day:
             ws.row_dimensions[current_row].height = 26
-            ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=8)
+            ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=9)
             m_cell = ws.cell(current_row, 2, value='امتحان منتصف الترم')
             m_cell.font = font_exam
             m_cell.alignment = Alignment(horizontal='center', vertical='center')
-            for col in range(1, 9):
+            for col in range(1, 10):
                 c = ws.cell(current_row, col)
                 c.fill = exam_fill
                 c.border = border_cell
@@ -238,22 +259,38 @@ def add_training_program_sheet(
 
     # Final Exam row
     ws.row_dimensions[current_row].height = 28
-    ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=4)
+    ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=3)
     f_cell = ws.cell(current_row, 2, value='امتحان ختامى الترم')
     f_cell.font = font_total
     f_cell.alignment = Alignment(horizontal='center', vertical='center')
 
-    # Total Hours
-    c_hrs = ws.cell(current_row, 5, value=total_hours)
+    # Total Theory Hours in Col D
+    c_th = ws.cell(current_row, 4, value=theory_hrs_sum if theory_hrs_sum > 0 else total_hours / 2)
+    c_th.font = font_total
+    c_th.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Total Practical Hours in Col E
+    c_pr = ws.cell(current_row, 5, value=prac_hrs_sum if prac_hrs_sum > 0 else total_hours / 2)
+    c_pr.font = font_total
+    c_pr.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Total Hours in Col F
+    c_hrs = ws.cell(current_row, 6, value=total_hours)
     c_hrs.font = font_total
     c_hrs.alignment = Alignment(horizontal='center', vertical='center')
 
-    # Total Questions
-    c_qs = ws.cell(current_row, 8, value=total_questions)
+    # Page range merged dash
+    ws.merge_cells(start_row=current_row, start_column=7, end_row=current_row, end_column=8)
+    c_dash = ws.cell(current_row, 7, value='-')
+    c_dash.font = font_total
+    c_dash.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Total Questions in Col I
+    c_qs = ws.cell(current_row, 9, value=total_questions)
     c_qs.font = font_total
     c_qs.alignment = Alignment(horizontal='center', vertical='center')
 
-    for col in range(1, 9):
+    for col in range(1, 10):
         c = ws.cell(current_row, col)
         c.fill = total_fill
         c.border = border_cell
@@ -270,11 +307,12 @@ def add_training_program_sheet(
     ws.column_dimensions['A'].width = 14
     ws.column_dimensions['B'].width = 14
     ws.column_dimensions['C'].width = 12
-    ws.column_dimensions['D'].width = 52
-    ws.column_dimensions['E'].width = 16
-    ws.column_dimensions['F'].width = 12
-    ws.column_dimensions['G'].width = 12
-    ws.column_dimensions['H'].width = 16
+    ws.column_dimensions['D'].width = 44
+    ws.column_dimensions['E'].width = 44
+    ws.column_dimensions['F'].width = 14
+    ws.column_dimensions['G'].width = 10
+    ws.column_dimensions['H'].width = 10
+    ws.column_dimensions['I'].width = 14
 
 
 def build_workbook(

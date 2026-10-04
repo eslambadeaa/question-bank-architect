@@ -1,7 +1,10 @@
 """
-Generate Scenario 4 Institutional Training Program Workbook
+Generate Scenario 4 Institutional Training Program Workbook with Theory and Practical (عملي) columns.
 Specialty: الضبع الاسود
-Source Question Bank: C:\\Users\\MaximuM-Tech\\Downloads\\بنوك\\معدة الضبع الاسود.xlsx
+Accredited Quotas:
+- الإعدادي: 56 hours (28h Theory + 28h Practical), 700 questions
+- المتوسط: 112 hours (56h Theory + 56h Practical), 1400 questions
+- النهائي: 80 hours (40h Theory + 40h Practical), 1000 questions
 """
 
 import os
@@ -9,7 +12,7 @@ import sys
 from copy import copy
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-from openpyxl.utils import get_column_letter
+from full_schedules import PREP_SCHEDULE, MED_SCHEDULE, FINAL_SCHEDULE
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -30,13 +33,6 @@ def apply_rtl(ws):
     except Exception:
         pass
 
-def calc_page_range(idx, total_items, total_pages=26):
-    start_p = 1 + int((idx - 1) * max(1, total_pages - 1) / total_items)
-    end_p = max(start_p, 1 + int(idx * max(1, total_pages - 1) / total_items))
-    return start_p, end_p
-
-from exact_page_mappings import EXACT_PAGES_PREP, EXACT_PAGES_MED, EXACT_PAGES_FIN
-
 def main():
     src_path = os.path.join(r"C:\Users\MaximuM-Tech\Downloads\بنوك", "معدة الضبع الاسود.xlsx")
     if not os.path.exists(src_path):
@@ -44,65 +40,50 @@ def main():
         return
 
     src_wb = openpyxl.load_workbook(src_path, data_only=True)
-    ws_syl = src_wb['الجدول الزمني وفهرس الدروس']
-
-    all_items = []
-    for r in range(3, ws_syl.max_row + 1):
-        idx = ws_syl.cell(r, 1).value
-        if idx is not None and isinstance(idx, (int, float)):
-            all_items.append({
-                'id': int(idx),
-                'title': ws_syl.cell(r, 2).value,
-                'hours': ws_syl.cell(r, 3).value or 2,
-                'questions': ws_syl.cell(r, 5).value or 25,
-                'reference': ws_syl.cell(r, 6).value or 'مرجع الضبع الاسود.docx'
-            })
-
-    print(f"Extracted {len(all_items)} syllabus items from source.")
 
     sections_config = [
         {
             'sheet_name': 'برنامج محاضرات - الإعدادي',
             'title_sec': 'الإعدادي',
-            'items': all_items[:28],
-            'exact_pages': EXACT_PAGES_PREP,
-            'total_pages': 31,
+            'schedule': PREP_SCHEDULE,
             'days_count': 7,
             'midterm_day': 4,
-            'hours': 56.0,
+            'theory_hours': 28.0,
+            'prac_hours': 28.0,
+            'total_hours': 56.0,
             'questions': 700
         },
         {
             'sheet_name': 'برنامج محاضرات - المتوسط',
             'title_sec': 'المتوسط',
-            'items': all_items[28:84],
-            'exact_pages': EXACT_PAGES_MED,
-            'total_pages': 31,
+            'schedule': MED_SCHEDULE,
             'days_count': 14,
             'midterm_day': 7,
-            'hours': 112.0,
+            'theory_hours': 56.0,
+            'prac_hours': 56.0,
+            'total_hours': 112.0,
             'questions': 1400
         },
         {
             'sheet_name': 'برنامج محاضرات - النهائي',
             'title_sec': 'النهائي',
-            'items': all_items[84:124],
-            'exact_pages': EXACT_PAGES_FIN,
-            'total_pages': 33,
+            'schedule': FINAL_SCHEDULE,
             'days_count': 10,
             'midterm_day': 5,
-            'hours': 80.0,
+            'theory_hours': 40.0,
+            'prac_hours': 40.0,
+            'total_hours': 80.0,
             'questions': 1000
         }
     ]
 
     out_wb = openpyxl.Workbook()
-    out_wb.remove(out_wb.active) # Remove default sheet
+    out_wb.remove(out_wb.active)  # Remove default sheet
 
     border_cell = create_thin_border()
     font_title = Font(name='Times New Roman', size=22, bold=True)
     font_header = Font(name='Times New Roman', size=15, bold=True)
-    font_data = Font(name='Times New Roman', size=13, bold=False)
+    font_data = Font(name='Times New Roman', size=12, bold=False)
     font_exam = Font(name='Times New Roman', size=15, bold=True)
     font_total = Font(name='Times New Roman', size=15, bold=True)
 
@@ -114,8 +95,8 @@ def main():
         ws = out_wb.create_sheet(title=cfg['sheet_name'])
         apply_rtl(ws)
 
-        # Row 1: Title
-        ws.merge_cells('A1:H1')
+        # Row 1: Title Banner
+        ws.merge_cells('A1:I1')
         t_cell = ws['A1']
         t_cell.value = f"برنامج محاضرات تخصص ( الضبع الاسود ) للقسم ( {cfg['title_sec']} )"
         t_cell.font = font_title
@@ -127,19 +108,19 @@ def main():
         ws.merge_cells('A3:A4')
         ws.merge_cells('B3:B4')
         ws.merge_cells('C3:C4')
-        ws.merge_cells('D3:D4')
-        ws.merge_cells('E3:E4')
-        ws.merge_cells('F3:G3')
-        ws.merge_cells('H3:H4')
+        ws.merge_cells('D3:E3')
+        ws.merge_cells('F3:F4')
+        ws.merge_cells('G3:H3')
+        ws.merge_cells('I3:I4')
 
         headers_3 = {
             'A3': 'الترم',
             'B3': 'اليوم',
             'C3': 'المحاضرة',
             'D3': 'اسم الموضوع',
-            'E3': 'عدد الساعات',
-            'F3': 'الصفحة في المرجع الموحد',
-            'H3': 'عدد الاسئلة'
+            'F3': 'عدد الساعات',
+            'G3': 'الصفحة في المرجع الموحد',
+            'I3': 'عدد الاسئلة'
         }
         for cell_id, text in headers_3.items():
             c = ws[cell_id]
@@ -149,9 +130,12 @@ def main():
             c.alignment = Alignment(horizontal='center', vertical='center')
             c.border = border_cell
 
-        ws['F4'].value = 'من'
-        ws['G4'].value = 'الي'
-        for c_id in ['F4', 'G4']:
+        ws['D4'].value = 'نظري'
+        ws['E4'].value = 'عملي'
+        ws['G4'].value = 'من'
+        ws['H4'].value = 'الي'
+
+        for c_id in ['D4', 'E4', 'G4', 'H4']:
             c = ws[c_id]
             c.font = font_header
             c.fill = header_fill
@@ -159,14 +143,14 @@ def main():
             c.border = border_cell
 
         for r in [3, 4]:
-            ws.row_dimensions[r].height = 25
-            for col in range(1, 9):
+            ws.row_dimensions[r].height = 26
+            for col in range(1, 10):
                 ws.cell(r, col).border = border_cell
                 if ws.cell(r, col).fill.fill_type is None:
                     ws.cell(r, col).fill = header_fill
 
         current_row = 5
-        items = cfg['items']
+        schedule = cfg['schedule']
         days_count = cfg['days_count']
         midterm_day = cfg['midterm_day']
         item_idx = 0
@@ -178,29 +162,29 @@ def main():
 
             # 4 periods per day
             for period_idx in range(1, 5):
-                it = items[item_idx] if item_idx < len(items) else None
+                it = schedule[item_idx] if item_idx < len(schedule) else None
                 p_label = f'ف{period_idx}'
-                lec_title = it['title'] if it else f'موضوع تدريبي {item_idx + 1}'
+                th_val = it['theory'] if it else '-'
+                pr_val = it['prac'] if it else '-'
                 hrs = 2.0
-                if cfg.get('exact_pages') and item_idx < len(cfg['exact_pages']):
-                    p_from, p_to = cfg['exact_pages'][item_idx]
-                else:
-                    p_from, p_to = calc_page_range(item_idx + 1, len(items), cfg['total_pages'])
+                p_from = it['p_from'] if it else 1
+                p_to = it['p_to'] if it else 1
                 q_cnt = 25
 
                 ws.cell(current_row, 3, value=p_label).alignment = Alignment(horizontal='center', vertical='center')
-                ws.cell(current_row, 4, value=lec_title).alignment = Alignment(horizontal='right', vertical='center')
-                ws.cell(current_row, 5, value=hrs).alignment = Alignment(horizontal='center', vertical='center')
-                ws.cell(current_row, 6, value=p_from).alignment = Alignment(horizontal='center', vertical='center')
-                ws.cell(current_row, 7, value=p_to).alignment = Alignment(horizontal='center', vertical='center')
-                ws.cell(current_row, 8, value=q_cnt).alignment = Alignment(horizontal='center', vertical='center')
+                ws.cell(current_row, 4, value=th_val).alignment = Alignment(horizontal='right' if th_val != '-' else 'center', vertical='center')
+                ws.cell(current_row, 5, value=pr_val).alignment = Alignment(horizontal='right' if pr_val != '-' else 'center', vertical='center')
+                ws.cell(current_row, 6, value=hrs).alignment = Alignment(horizontal='center', vertical='center')
+                ws.cell(current_row, 7, value=p_from).alignment = Alignment(horizontal='center', vertical='center')
+                ws.cell(current_row, 8, value=p_to).alignment = Alignment(horizontal='center', vertical='center')
+                ws.cell(current_row, 9, value=q_cnt).alignment = Alignment(horizontal='center', vertical='center')
 
-                for col in range(1, 9):
+                for col in range(1, 10):
                     c = ws.cell(current_row, col)
                     c.font = font_data
                     c.border = border_cell
 
-                ws.row_dimensions[current_row].height = 24
+                ws.row_dimensions[current_row].height = 25
                 current_row += 1
                 item_idx += 1
 
@@ -212,14 +196,14 @@ def main():
             for r_b in range(day_start_row, day_start_row + 4):
                 ws.cell(r_b, 2).border = border_cell
 
-            # Insert Midterm Exam row after midterm_day
+            # Midterm Exam row after midterm_day
             if day_num == midterm_day:
                 ws.row_dimensions[current_row].height = 26
-                ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=8)
+                ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=9)
                 m_cell = ws.cell(current_row, 2, value='امتحان منتصف الترم')
                 m_cell.font = font_exam
                 m_cell.alignment = Alignment(horizontal='center', vertical='center')
-                for col in range(1, 9):
+                for col in range(1, 10):
                     c = ws.cell(current_row, col)
                     c.fill = exam_fill
                     c.border = border_cell
@@ -227,24 +211,38 @@ def main():
 
         # Final Exam row
         ws.row_dimensions[current_row].height = 28
-        ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=4)
+        ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=3)
         f_cell = ws.cell(current_row, 2, value='امتحان ختامى الترم')
         f_cell.font = font_total
         f_cell.alignment = Alignment(horizontal='center', vertical='center')
 
-        # Hours sum
-        tot_hrs = cfg['hours']
-        c_hrs = ws.cell(current_row, 5, value=tot_hrs)
+        # Total Theory Hours in Col D
+        c_th = ws.cell(current_row, 4, value=cfg['theory_hours'])
+        c_th.font = font_total
+        c_th.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Total Practical Hours in Col E
+        c_pr = ws.cell(current_row, 5, value=cfg['prac_hours'])
+        c_pr.font = font_total
+        c_pr.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Grand Total Hours in Col F
+        c_hrs = ws.cell(current_row, 6, value=cfg['total_hours'])
         c_hrs.font = font_total
         c_hrs.alignment = Alignment(horizontal='center', vertical='center')
 
-        # Questions sum
-        tot_qs = cfg['questions']
-        c_qs = ws.cell(current_row, 8, value=tot_qs)
+        # Blank/dash in pages G, H
+        ws.merge_cells(start_row=current_row, start_column=7, end_row=current_row, end_column=8)
+        c_pg = ws.cell(current_row, 7, value='-')
+        c_pg.font = font_total
+        c_pg.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Total Questions in Col I
+        c_qs = ws.cell(current_row, 9, value=cfg['questions'])
         c_qs.font = font_total
         c_qs.alignment = Alignment(horizontal='center', vertical='center')
 
-        for col in range(1, 9):
+        for col in range(1, 10):
             c = ws.cell(current_row, col)
             c.fill = total_fill
             c.border = border_cell
@@ -261,11 +259,12 @@ def main():
         ws.column_dimensions['A'].width = 14
         ws.column_dimensions['B'].width = 14
         ws.column_dimensions['C'].width = 12
-        ws.column_dimensions['D'].width = 52
-        ws.column_dimensions['E'].width = 16
-        ws.column_dimensions['F'].width = 12
-        ws.column_dimensions['G'].width = 12
-        ws.column_dimensions['H'].width = 16
+        ws.column_dimensions['D'].width = 44
+        ws.column_dimensions['E'].width = 44
+        ws.column_dimensions['F'].width = 14
+        ws.column_dimensions['G'].width = 10
+        ws.column_dimensions['H'].width = 10
+        ws.column_dimensions['I'].width = 14
 
     # Copy Question Bank sheets from source into out_wb
     for sname in ['بنك القسم الإعدادي', 'بنك القسم المتوسط', 'بنك القسم النهائي']:
