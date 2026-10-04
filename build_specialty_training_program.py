@@ -175,6 +175,9 @@ sections_data = [
     }
 ]
 
+font_term_total = Font(name="Times New Roman", size=16, bold=True, color="000000")
+fill_term_total = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid") # slightly lighter than grand total
+
 current_row = 4
 
 for sec_idx, sec in enumerate(sections_data):
@@ -190,61 +193,103 @@ for sec_idx, sec in enumerate(sections_data):
         b_cell.border = border_all
     current_row += 1
 
-    start_sec_row = current_row
     sec_topics = sec["topics"]
     serial_num = 1
     
+    # Group topics by term: { 'الترم الأول': [(topic, hours), ...], 'الترم الثاني': [...] }
+    terms_grouped = OrderedDict()
     for (term, topic), hours in sec_topics.items():
-        ws.row_dimensions[current_row].height = 30.75
+        t_key = term if term else "الترم الأول"
+        if t_key not in terms_grouped:
+            terms_grouped[t_key] = []
+        terms_grouped[t_key].append((topic, hours))
         
-        # Col A: م
-        c_a = ws.cell(current_row, 1, serial_num)
-        c_a.alignment = Alignment(horizontal="center", vertical="center")
+    term_total_rows = []
+    has_multiple_terms = len(terms_grouped) > 1
+
+    for term_name, term_items in terms_grouped.items():
+        start_term_row = current_row
         
-        # Col B: اسم الموضوع
-        c_b = ws.cell(current_row, 2, topic)
-        c_b.alignment = Alignment(horizontal="right", vertical="center")
-        
-        # Col C: السنة الدراسية
-        c_c = ws.cell(current_row, 3, sec["class_label"])
-        c_c.alignment = Alignment(horizontal="center", vertical="center")
-        
-        # Col D: نظرى
-        c_d = ws.cell(current_row, 4, hours["th"] if hours["th"] > 0 else "-")
-        c_d.alignment = Alignment(horizontal="center", vertical="center")
-        
-        # Col E: عملي
-        c_e = ws.cell(current_row, 5, hours["pr"] if hours["pr"] > 0 else "-")
-        c_e.alignment = Alignment(horizontal="center", vertical="center")
-        
-        # Formatting
-        for col_idx in range(1, 7):
-            cell = ws.cell(current_row, col_idx)
-            cell.font = font_data
-            cell.border = border_all
+        for topic, hours in term_items:
+            ws.row_dimensions[current_row].height = 30.75
             
-        current_row += 1
-        serial_num += 1
+            # Col A: م
+            c_a = ws.cell(current_row, 1, serial_num)
+            c_a.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Col B: اسم الموضوع
+            c_b = ws.cell(current_row, 2, topic)
+            c_b.alignment = Alignment(horizontal="right", vertical="center")
+            
+            # Col C: السنة الدراسية
+            c_c = ws.cell(current_row, 3, sec["class_label"])
+            c_c.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Col D: نظرى
+            c_d = ws.cell(current_row, 4, hours["th"] if hours["th"] > 0 else "-")
+            c_d.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Col E: عملي
+            c_e = ws.cell(current_row, 5, hours["pr"] if hours["pr"] > 0 else "-")
+            c_e.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Formatting
+            for col_idx in range(1, 7):
+                cell = ws.cell(current_row, col_idx)
+                cell.font = font_data
+                cell.border = border_all
+                
+            current_row += 1
+            serial_num += 1
 
-    end_sec_row = current_row - 1
-    
-    # Merge Col F across this section: يصلح لعدد ساعات النظرى فقط
-    ws.merge_cells(start_row=start_sec_row, start_column=6, end_row=end_sec_row, end_column=6)
-    cell_f = ws.cell(start_sec_row, 6, "يصلح لعدد ساعات النظرى فقط")
-    cell_f.font = font_col_f
-    cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        end_term_row = current_row - 1
+        
+        # Merge Col F across this term: يصلح لعدد ساعات النظرى فقط
+        ws.merge_cells(start_row=start_term_row, start_column=6, end_row=end_term_row, end_column=6)
+        cell_f = ws.cell(start_term_row, 6, "يصلح لعدد ساعات النظرى فقط")
+        cell_f.font = font_col_f
+        cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Summary Row for this section
+        if has_multiple_terms:
+            # Term Subtotal Row
+            ws.row_dimensions[current_row].height = 30.75
+            ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
+            c_term_label = ws.cell(current_row, 1, f"إجمالي ساعات {term_name}")
+            c_term_label.alignment = Alignment(horizontal="center", vertical="center")
+            
+            c_term_th = ws.cell(current_row, 4, f"=SUM(D{start_term_row}:D{end_term_row})")
+            c_term_th.alignment = Alignment(horizontal="center", vertical="center")
+            
+            c_term_pr = ws.cell(current_row, 5, f"=SUM(E{start_term_row}:E{end_term_row})")
+            c_term_pr.alignment = Alignment(horizontal="center", vertical="center")
+            
+            for c in range(1, 7):
+                cell = ws.cell(current_row, c)
+                cell.font = font_term_total
+                cell.fill = fill_term_total
+                cell.border = border_all
+                
+            term_total_rows.append(current_row)
+            current_row += 1
+
+    # Section Grand Total Row
     ws.row_dimensions[current_row].height = 30.75
     ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=3)
     c_tot_label = ws.cell(current_row, 1, sec["total_label"])
     c_tot_label.alignment = Alignment(horizontal="center", vertical="center")
     
     # Formulas for totals
-    c_tot_th = ws.cell(current_row, 4, f"=SUM(D{start_sec_row}:D{end_sec_row})")
+    if has_multiple_terms:
+        # Sum of the terms
+        th_terms_str = "+".join([f"D{r}" for r in term_total_rows])
+        pr_terms_str = "+".join([f"E{r}" for r in term_total_rows])
+        c_tot_th = ws.cell(current_row, 4, f"={th_terms_str}")
+        c_tot_pr = ws.cell(current_row, 5, f"={pr_terms_str}")
+    else:
+        c_tot_th = ws.cell(current_row, 4, f"=SUM(D{start_term_row}:D{end_term_row})")
+        c_tot_pr = ws.cell(current_row, 5, f"=SUM(E{start_term_row}:E{end_term_row})")
+        
     c_tot_th.alignment = Alignment(horizontal="center", vertical="center")
-    
-    c_tot_pr = ws.cell(current_row, 5, f"=SUM(E{start_sec_row}:E{end_sec_row})")
     c_tot_pr.alignment = Alignment(horizontal="center", vertical="center")
     
     for c in range(1, 7):
