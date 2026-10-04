@@ -35,6 +35,8 @@ def calc_page_range(idx, total_items, total_pages=26):
     end_p = max(start_p, 1 + int(idx * max(1, total_pages - 1) / total_items))
     return start_p, end_p
 
+from exact_page_mappings import EXACT_PAGES_PREP, EXACT_PAGES_MED, EXACT_PAGES_FIN
+
 def main():
     src_path = os.path.join(r"C:\Users\MaximuM-Tech\Downloads\بنوك", "معدة الضبع الاسود.xlsx")
     if not os.path.exists(src_path):
@@ -63,7 +65,8 @@ def main():
             'sheet_name': 'برنامج محاضرات - الإعدادي',
             'title_sec': 'الإعدادي',
             'items': all_items[:28],
-            'total_pages': 33,
+            'exact_pages': EXACT_PAGES_PREP,
+            'total_pages': 31,
             'days_count': 7,
             'midterm_day': 4,
             'hours': 56.0,
@@ -73,7 +76,8 @@ def main():
             'sheet_name': 'برنامج محاضرات - المتوسط',
             'title_sec': 'المتوسط',
             'items': all_items[28:84],
-            'total_pages': 33,
+            'exact_pages': EXACT_PAGES_MED,
+            'total_pages': 31,
             'days_count': 14,
             'midterm_day': 7,
             'hours': 112.0,
@@ -83,6 +87,7 @@ def main():
             'sheet_name': 'برنامج محاضرات - النهائي',
             'title_sec': 'النهائي',
             'items': all_items[84:124],
+            'exact_pages': EXACT_PAGES_FIN,
             'total_pages': 33,
             'days_count': 10,
             'midterm_day': 5,
@@ -177,7 +182,10 @@ def main():
                 p_label = f'ف{period_idx}'
                 lec_title = it['title'] if it else f'موضوع تدريبي {item_idx + 1}'
                 hrs = 2.0
-                p_from, p_to = calc_page_range(item_idx + 1, len(items), cfg['total_pages'])
+                if cfg.get('exact_pages') and item_idx < len(cfg['exact_pages']):
+                    p_from, p_to = cfg['exact_pages'][item_idx]
+                else:
+                    p_from, p_to = calc_page_range(item_idx + 1, len(items), cfg['total_pages'])
                 q_cnt = 25
 
                 ws.cell(current_row, 3, value=p_label).alignment = Alignment(horizontal='center', vertical='center')

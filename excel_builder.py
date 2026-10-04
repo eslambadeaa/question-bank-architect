@@ -191,7 +191,12 @@ def add_training_program_sheet(
             p_label = f'ف{period_idx}'
             lec_title = it.get('lesson_name') or it.get('title') if it else f'موضوع تدريبي {item_idx + 1}'
             hrs = 2.0
-            p_from, p_to = calc_page_range(item_idx + 1, n_items, total_pages)
+            if it and 'page_from' in it and 'page_to' in it and it['page_from'] is not None:
+                p_from, p_to = it['page_from'], it['page_to']
+            elif it and 'p_from' in it and 'p_to' in it and it['p_from'] is not None:
+                p_from, p_to = it['p_from'], it['p_to']
+            else:
+                p_from, p_to = calc_page_range(item_idx + 1, n_items, total_pages)
             q_cnt = 25
 
             ws.cell(current_row, 3, value=p_label).alignment = Alignment(horizontal='center', vertical='center')
