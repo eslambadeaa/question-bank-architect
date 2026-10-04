@@ -170,11 +170,11 @@ sections_data = [
 ]
 
 current_row = 4
-serial_num = 1
 
 for sec_idx, sec in enumerate(sections_data):
     start_sec_row = current_row
     sec_topics = sec["topics"]
+    serial_num = 1
     
     for (term, topic), hours in sec_topics.items():
         ws.row_dimensions[current_row].height = 30.75
