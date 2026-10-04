@@ -148,23 +148,29 @@ for r in [2, 3]:
         cell.border = border_all
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
+font_section_banner = Font(name="Times New Roman", size=20, bold=True, color="000000")
+fill_section_banner = PatternFill(start_color="B8CCE4", end_color="B8CCE4", fill_type="solid") # soft professional accent
+
 sections_data = [
     {
         "name": "القسم الإعدادي",
-        "class_label": "الإعدادية",
-        "total_label": "إجمالي القسم الإعدادي (السنة الأولى)",
+        "banner_title": "موضوعات برنامج تدريب ( القسم الإعدادي ) - تخصص الضبع الأسود",
+        "class_label": "الإعدادي",
+        "total_label": "إجمالي القسم الإعدادي",
         "topics": prep_topics
     },
     {
         "name": "القسم المتوسط",
-        "class_label": "المتوسطة",
-        "total_label": "إجمالي القسم المتوسط (السنة الثانية)",
+        "banner_title": "موضوعات برنامج تدريب ( القسم المتوسط ) - تخصص الضبع الأسود",
+        "class_label": "المتوسط",
+        "total_label": "إجمالي القسم المتوسط",
         "topics": med_topics
     },
     {
         "name": "القسم النهائي",
-        "class_label": "النهائية",
-        "total_label": "إجمالي القسم النهائي (السنة الثالثة)",
+        "banner_title": "موضوعات برنامج تدريب ( القسم النهائي ) - تخصص الإيجلا",
+        "class_label": "النهائي",
+        "total_label": "إجمالي القسم النهائي",
         "topics": fin_topics
     }
 ]
@@ -172,6 +178,18 @@ sections_data = [
 current_row = 4
 
 for sec_idx, sec in enumerate(sections_data):
+    # 1. Section Banner across A:F
+    ws.row_dimensions[current_row].height = 35.0
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=6)
+    cell_banner = ws.cell(current_row, 1, sec["banner_title"])
+    cell_banner.font = font_section_banner
+    cell_banner.alignment = Alignment(horizontal="center", vertical="center")
+    for c in range(1, 7):
+        b_cell = ws.cell(current_row, c)
+        b_cell.fill = fill_section_banner
+        b_cell.border = border_all
+    current_row += 1
+
     start_sec_row = current_row
     sec_topics = sec["topics"]
     serial_num = 1
@@ -250,5 +268,10 @@ for sec_idx, sec in enumerate(sections_data):
 
 # Save target workbook
 print(f"Saving updated workbook to: {target_file}")
-wb.save(target_file)
-print("SUCCESS: Updated successfully!")
+try:
+    wb.save(target_file)
+    print("SUCCESS: Updated target file successfully!")
+except PermissionError:
+    alt_file = r"C:\Users\MaximuM-Tech\Downloads\برنامج تدريب تخصص_محدث.xlsx"
+    wb.save(alt_file)
+    print(f"NOTICE: '{target_file}' is currently open in Excel. Saved to '{alt_file}' instead.")
