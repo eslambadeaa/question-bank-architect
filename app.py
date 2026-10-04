@@ -323,7 +323,8 @@ scenario_choice = st.radio(
     options=[
         "السيناريو 1: توليد شامل للأقسام الثلاثة (القسم الإعدادي / القسم المتوسط / القسم النهائي) مع فهرس الدروس",
         "السيناريو 2: توليد مخصص لقسم أو دورة محددة فقط",
-        "السيناريو 3: توليد الجدول الزمني وفهرس الدروس فقط (فهرس المحاضرات بدون بنك أسئلة)"
+        "السيناريو 3: توليد الجدول الزمني وفهرس الدروس فقط (فهرس المحاضرات بدون بنك أسئلة)",
+        "السيناريو 4: قالب برنامج التدريب المعتمد للأقسام (فترات وأيام وامتحانات - نموذج أداة الامتحانات)"
     ],
     index=0
 )
@@ -517,7 +518,9 @@ def render_section_source_selector(sec_key: str, sec_label: str):
 # Structure configuration based on chosen scenario
 sections_setup = []
 
-if "السيناريو 1" in scenario_choice:
+if "السيناريو 1" in scenario_choice or "السيناريو 4" in scenario_choice:
+    if "السيناريو 4" in scenario_choice:
+        st.info("📋 **قالب برنامج التدريب المعتمد (السيناريو 4):** سيتم توليد وتنسيق الجداول الزمنية وفق هيكل الفترات اليومية (ف1..ف4)، دمج عمود اسم الموضوع، إدراج عمود الساعات (2.0 س) والصفحات (من / الي)، وفواصل امتحانات منتصف وختامي الترم مع المجاميع المعتمدة.")
     st.write("##### 🎛️ تخصيص الأقسام الثلاثة والمراجع وخيارات تكرار الأسئلة:")
     tab_prep, tab_med, tab_fin = st.tabs(["📘 القسم الإعدادي", "📙 القسم المتوسط", "📕 القسم النهائي"])
     
@@ -732,7 +735,7 @@ if generate_clicked:
         # ----------------------------------------------------
         # Scenario Routing & Execution
         # ----------------------------------------------------
-        if "السيناريو 1" in scenario_choice:
+        if "السيناريو 1" in scenario_choice or "السيناريو 4" in scenario_choice:
             total_syl_lec = sum(s["lectures"] for s in sections_setup)
             all_file_names = list(uploaded_docs_data.keys())
             sec_breakdown_arg = [
@@ -864,11 +867,14 @@ if generate_clicked:
             if total_qs == 0:
                 raise RuntimeError("لم يتم توليد أي أسئلة في بنك الأسئلة! يرجى التحقق من مفتاح الـ API ومعدل الاستهلاك اليومي للنماذج.")
 
-        status_text.text("4/4: جارٍ إنشاء مصنف Excel وتطبيق التنسيق اليميني والقاعدة الصارمة (1 : 2 : 25)...")
+        is_scenario_4 = "السيناريو 4" in scenario_choice
+        status_text.text("4/4: جارٍ إنشاء مصنف Excel وتطبيق التنسيق اليميني والقواعد المعتمدة...")
         excel_buf = build_workbook(
             syllabus_data=generated_syllabus_data,
             question_banks=generated_qb_list,
-            equipment_name=primary_equipment_name
+            equipment_name=primary_equipment_name,
+            training_program_mode=is_scenario_4,
+            sections_setup=sections_setup
         )
         progress_bar.progress(100)
         status_text.text("✅ اكتملت المعالجة وتطبيق القاعدة الصارمة بنجاح تام!")

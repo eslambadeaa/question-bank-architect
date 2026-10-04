@@ -67,22 +67,232 @@ def auto_fit_columns(ws, max_cols: int, min_width: int = 12, max_width: int = 65
         ws.column_dimensions[col_letter].width = calculated_width
 
 
+ARABIC_DAYS = [
+    "الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس",
+    "السابع", "الثامن", "التاسع", "العاشر", "الحادي عشر", "الثانى عشر",
+    "الثالث عشر", "الرابع عشر", "الخامس عشر", "السادس عشر"
+]
+
+
+def calc_page_range(idx: int, total_items: int, total_pages: int = 25):
+    """Calculates realistic proportional page ranges for lectures."""
+    if total_items <= 0:
+        return 1, 1
+    start_p = 1 + int((idx - 1) * max(1, total_pages - 1) / total_items)
+    end_p = max(start_p, 1 + int(idx * max(1, total_pages - 1) / total_items))
+    return start_p, end_p
+
+
+def add_training_program_sheet(
+    wb: openpyxl.Workbook,
+    sheet_title: str,
+    section_label: str,
+    specialty_name: str,
+    items: List[Dict[str, Any]],
+    total_pages: int = 26,
+    days_count: Optional[int] = None,
+    midterm_day: Optional[int] = None,
+    total_hours: Optional[float] = None,
+    total_questions: Optional[int] = None
+):
+    """
+    Builds an institutional training program sheet matching the official committee template:
+    - 4 periods (ف1..ف4) per day with merged day cells.
+    - Merged single topic column (اسم الموضوع).
+    - Hours (2.0), reference pages (من / الي), and questions count (25).
+    - Integrated Midterm and Final exam rows with total formulas/values.
+    """
+    ws = wb.create_sheet(title=sheet_title)
+    apply_rtl_and_grid(ws)
+
+    border_cell = create_thin_border()
+    font_title = Font(name='Times New Roman', size=22, bold=True)
+    font_header = Font(name='Times New Roman', size=15, bold=True)
+    font_data = Font(name='Times New Roman', size=13, bold=False)
+    font_exam = Font(name='Times New Roman', size=15, bold=True)
+    font_total = Font(name='Times New Roman', size=15, bold=True)
+
+    header_fill = PatternFill(start_color='E8EEF5', end_color='E8EEF5', fill_type='solid')
+    exam_fill = PatternFill(start_color='F2F4F7', end_color='F2F4F7', fill_type='solid')
+    total_fill = PatternFill(start_color='DCE6F1', end_color='DCE6F1', fill_type='solid')
+
+    # Row 1: Official Specialty & Section Banner
+    ws.merge_cells('A1:H1')
+    t_cell = ws['A1']
+    clean_sec = section_label.replace("القسم ", "").strip()
+    t_cell.value = f"برنامج محاضرات تخصص ( {specialty_name} ) للقسم ( {clean_sec} )"
+    t_cell.font = font_title
+    t_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 38
+    ws.row_dimensions[2].height = 10
+
+    # Header Rows 3 and 4
+    ws.merge_cells('A3:A4')
+    ws.merge_cells('B3:B4')
+    ws.merge_cells('C3:C4')
+    ws.merge_cells('D3:D4')
+    ws.merge_cells('E3:E4')
+    ws.merge_cells('F3:G3')
+    ws.merge_cells('H3:H4')
+
+    headers_3 = {
+        'A3': 'الترم',
+        'B3': 'اليوم',
+        'C3': 'المحاضرة',
+        'D3': 'اسم الموضوع',
+        'E3': 'عدد الساعات',
+        'F3': 'الصفحة في المرجع الموحد',
+        'H3': 'عدد الاسئلة'
+    }
+    for cell_id, text in headers_3.items():
+        c = ws[cell_id]
+        c.value = text
+        c.font = font_header
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        c.border = border_cell
+
+    ws['F4'].value = 'من'
+    ws['G4'].value = 'الي'
+    for c_id in ['F4', 'G4']:
+        c = ws[c_id]
+        c.font = font_header
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        c.border = border_cell
+
+    for r in [3, 4]:
+        ws.row_dimensions[r].height = 25
+        for col in range(1, 9):
+            ws.cell(r, col).border = border_cell
+            if ws.cell(r, col).fill.fill_type is None:
+                ws.cell(r, col).fill = header_fill
+
+    n_items = len(items)
+    if days_count is None:
+        days_count = max(1, (n_items + 3) // 4)
+    if midterm_day is None:
+        midterm_day = max(1, days_count // 2)
+    if total_hours is None:
+        total_hours = n_items * 2.0
+    if total_questions is None:
+        total_questions = n_items * 25
+
+    current_row = 5
+    item_idx = 0
+    term_start_row = current_row
+
+    for day_num in range(1, days_count + 1):
+        day_label = ARABIC_DAYS[day_num - 1] if day_num <= len(ARABIC_DAYS) else f'اليوم {day_num}'
+        day_start_row = current_row
+
+        for period_idx in range(1, 5):
+            it = items[item_idx] if item_idx < n_items else None
+            p_label = f'ف{period_idx}'
+            lec_title = it.get('lesson_name') or it.get('title') if it else f'موضوع تدريبي {item_idx + 1}'
+            hrs = 2.0
+            p_from, p_to = calc_page_range(item_idx + 1, n_items, total_pages)
+            q_cnt = 25
+
+            ws.cell(current_row, 3, value=p_label).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 4, value=lec_title).alignment = Alignment(horizontal='right', vertical='center')
+            ws.cell(current_row, 5, value=hrs).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 6, value=p_from).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 7, value=p_to).alignment = Alignment(horizontal='center', vertical='center')
+            ws.cell(current_row, 8, value=q_cnt).alignment = Alignment(horizontal='center', vertical='center')
+
+            for col in range(1, 9):
+                c = ws.cell(current_row, col)
+                c.font = font_data
+                c.border = border_cell
+
+            ws.row_dimensions[current_row].height = 24
+            current_row += 1
+            item_idx += 1
+
+        # Merge day column (Col B) for the 4 rows
+        ws.merge_cells(start_row=day_start_row, start_column=2, end_row=day_start_row + 3, end_column=2)
+        day_cell = ws.cell(day_start_row, 2, value=day_label)
+        day_cell.font = font_header
+        day_cell.alignment = Alignment(horizontal='center', vertical='center')
+        for r_b in range(day_start_row, day_start_row + 4):
+            ws.cell(r_b, 2).border = border_cell
+
+        # Midterm Exam row after midterm_day
+        if day_num == midterm_day:
+            ws.row_dimensions[current_row].height = 26
+            ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=8)
+            m_cell = ws.cell(current_row, 2, value='امتحان منتصف الترم')
+            m_cell.font = font_exam
+            m_cell.alignment = Alignment(horizontal='center', vertical='center')
+            for col in range(1, 9):
+                c = ws.cell(current_row, col)
+                c.fill = exam_fill
+                c.border = border_cell
+            current_row += 1
+
+    # Final Exam row
+    ws.row_dimensions[current_row].height = 28
+    ws.merge_cells(start_row=current_row, start_column=2, end_row=current_row, end_column=4)
+    f_cell = ws.cell(current_row, 2, value='امتحان ختامى الترم')
+    f_cell.font = font_total
+    f_cell.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Total Hours
+    c_hrs = ws.cell(current_row, 5, value=total_hours)
+    c_hrs.font = font_total
+    c_hrs.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Total Questions
+    c_qs = ws.cell(current_row, 8, value=total_questions)
+    c_qs.font = font_total
+    c_qs.alignment = Alignment(horizontal='center', vertical='center')
+
+    for col in range(1, 9):
+        c = ws.cell(current_row, col)
+        c.fill = total_fill
+        c.border = border_cell
+
+    # Merge Term column A
+    ws.merge_cells(start_row=term_start_row, start_column=1, end_row=current_row, end_column=1)
+    a_term = ws.cell(term_start_row, 1, value='الترم الأول')
+    a_term.font = font_header
+    a_term.alignment = Alignment(horizontal='center', vertical='center')
+    for r_a in range(term_start_row, current_row + 1):
+        ws.cell(r_a, 1).border = border_cell
+
+    # Column widths
+    ws.column_dimensions['A'].width = 14
+    ws.column_dimensions['B'].width = 14
+    ws.column_dimensions['C'].width = 12
+    ws.column_dimensions['D'].width = 52
+    ws.column_dimensions['E'].width = 16
+    ws.column_dimensions['F'].width = 12
+    ws.column_dimensions['G'].width = 12
+    ws.column_dimensions['H'].width = 16
+
+
 def build_workbook(
     syllabus_data: Optional[Dict[str, Any]],
     question_banks: List[Dict[str, Any]],
-    equipment_name: str
+    equipment_name: str,
+    training_program_mode: bool = False,
+    sections_setup: Optional[List[Dict[str, Any]]] = None
 ) -> io.BytesIO:
     """
     Builds the complete multi-sheet Excel workbook:
-    - Sheet 1: الجدول الزمني وفهرس الدروس (Strict Single-Row: 1 Lecture : 2 Hours : 25 Questions)
+    - If training_program_mode is True (Scenario 4):
+      Creates institutional training program sheets with (ف1..ف4), midterm and final exams.
+    - Otherwise (Scenarios 1-3):
+      Sheet 1: الجدول الزمني وفهرس الدروس (Strict Single-Row: 1 Lecture : 2 Hours : 25 Questions)
     - Sheets 2..N: بنك [اسم القسم] - [اسم المعدة]
     """
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    # 1. Intellectual Property Metadata
-    wb.properties.creator = "إسلام عبد البديع"
-    wb.properties.lastModifiedBy = "إسلام عبد البديع"
+    # Intellectual Property Metadata
+    wb.properties.creator = "Eslam Abdelbadea"
+    wb.properties.lastModifiedBy = "Eslam Abdelbadea"
     wb.properties.title = f"بنك الأسئلة والجدول الزمني - {equipment_name}"
     wb.properties.subject = "LMS Question Bank & Syllabus Guide"
     wb.properties.description = f"{BRAND_NOTICE} | {FOOTER_NOTICE}"
@@ -91,12 +301,57 @@ def build_workbook(
     fill_banner = PatternFill(start_color="0D233A", end_color="0D233A", fill_type="solid")
     border_cell = create_thin_border()
 
+    all_items = syllabus_data.get("syllabus_items", []) if syllabus_data else []
+
     # ----------------------------------------------------
-    # SHEET 1: الجدول الزمني وفهرس الدروس
-    # Columns: [م | عنوان الدرس / المكون الفني | عدد الساعات المخصصة | عدد المحاضرات | عدد الأسئلة المستهدفة | المرجع المعتمد]
-    # Values per row: Hours=2, Lectures=1, Questions=25
+    # SCENARIO 4: INSTITUTIONAL TRAINING PROGRAM TEMPLATE
     # ----------------------------------------------------
-    if syllabus_data and syllabus_data.get("syllabus_items"):
+    if training_program_mode and all_items:
+        if sections_setup and len(sections_setup) > 0:
+            cur_offset = 0
+            for sec in sections_setup:
+                sec_name = sec["name"]
+                sec_lec = sec.get("lectures", len(all_items))
+                sec_eq = sec.get("equipment_name", equipment_name)
+                sec_items = all_items[cur_offset : cur_offset + sec_lec]
+                cur_offset += sec_lec
+
+                # Days and midterm configuration
+                days = max(1, (len(sec_items) + 3) // 4)
+                midterm = 4 if days == 7 else (7 if days == 14 else max(1, days // 2))
+
+                add_training_program_sheet(
+                    wb=wb,
+                    sheet_title=f"برنامج محاضرات - {sec_name}",
+                    section_label=sec_name,
+                    specialty_name=sec_eq,
+                    items=sec_items,
+                    total_pages=26,
+                    days_count=days,
+                    midterm_day=midterm,
+                    total_hours=len(sec_items) * 2.0,
+                    total_questions=len(sec_items) * 25
+                )
+        else:
+            # Single section fallback
+            days = max(1, (len(all_items) + 3) // 4)
+            add_training_program_sheet(
+                wb=wb,
+                sheet_title="برنامج التدريب المعتمد",
+                section_label="التخصص",
+                specialty_name=equipment_name,
+                items=all_items,
+                total_pages=26,
+                days_count=days,
+                midterm_day=max(1, days // 2),
+                total_hours=len(all_items) * 2.0,
+                total_questions=len(all_items) * 25
+            )
+
+    # ----------------------------------------------------
+    # STANDARD SYLLABUS SHEET (Scenarios 1-3)
+    # ----------------------------------------------------
+    elif syllabus_data and syllabus_data.get("syllabus_items"):
         ws_syl = wb.create_sheet(title="الجدول الزمني وفهرس الدروس")
         apply_rtl_and_grid(ws_syl)
 
