@@ -231,12 +231,12 @@ def validate_and_sanitize_questions(questions: List[Dict[str, Any]], equipment_n
         # 3. Clean lesson column (strictly forbid 'محاضرة' or 'الجزء')
         lesson = sanitize_lesson_name(lesson, idx, equipment_name)
             
-        # 4. Standardize options and question type (True/False and صواب وخطأ)
+        # 4. Standardize options and question type (True/False and صواب أو خطأ)
         opt_a = str(q.get("option_a", "")).strip()
         opt_b = str(q.get("option_b", "")).strip()
         opt_c = str(q.get("option_c", "")).strip()
         opt_d = str(q.get("option_d", "")).strip()
-        correct = str(q.get("correct_answer", "")).strip()
+        raw_correct = str(q.get("correct_answer", "")).strip()
         
         is_tf = (
             "صح" in q_type or "صواب" in q_type or "خطأ" in q_type or
@@ -245,29 +245,21 @@ def validate_and_sanitize_questions(questions: List[Dict[str, Any]], equipment_n
             (opt_c == "" and opt_d == "" and opt_a != "")
         )
         if is_tf:
-            q_type = "صواب وخطأ"
-            opt_a = "True"
-            opt_b = "False"
+            q_type = "صواب أو خطأ"
+            opt_a = "صواب"
+            opt_b = "خطأ"
             opt_c = ""
             opt_d = ""
-            if correct.lower() in ["أ", "option a", "a", "صواب", "صح", "true", "1"]:
-                correct = "True"
-            elif correct.lower() in ["ب", "option b", "b", "false", "خطأ", "0"]:
-                correct = "False"
-            elif correct not in ["True", "False"]:
-                correct = "True"
+            if raw_correct.lower() in ["أ", "a", "صواب", "صح", "true", "1", "الخيار أ (a)", "الخيار أ"]:
+                correct_label = "الخيار أ (A)"
+            else:
+                correct_label = "الخيار ب (B)"
         else:
             q_type = "اختيار من متعدد"
-            if correct.upper() in ["أ", "A", "OPTION A"]:
-                correct = opt_a
-            elif correct.upper() in ["ب", "B", "OPTION B"]:
-                correct = opt_b
-            elif correct.upper() in ["ج", "C", "OPTION C"]:
-                correct = opt_c
-            elif correct.upper() in ["د", "D", "OPTION D"]:
-                correct = opt_d
+            from excel_builder import get_correct_option_label
+            correct_label = get_correct_option_label(raw_correct, opt_a, opt_b, opt_c, opt_d)
                 
-        if difficulty not in DIFFICULTY_LEVELS:
+        if difficulty not in ["سهل", "متوسط", "صعب"]:
             difficulty = "متوسط"
             
         sanitized.append({
@@ -278,7 +270,8 @@ def validate_and_sanitize_questions(questions: List[Dict[str, Any]], equipment_n
             "option_b": opt_b,
             "option_c": opt_c,
             "option_d": opt_d,
-            "correct_answer": correct,
+            "correct_answer": correct_label,
+            "correct_label": correct_label,
             "difficulty": difficulty,
             "lesson": lesson,
             "question_type": q_type
@@ -330,21 +323,22 @@ def _generate_single_batch(
     1. الأسئلة من 1 إلى {mcq_count} (عدد {mcq_count} سؤالاً):
        - نوع السؤال (question_type): "اختيار من متعدد".
        - أربعة خيارات واضحة وغير مكررة (الخيار أ، الخيار ب، الخيار ج، الخيار د).
+       - الإجابة الصحيحة (correct_answer): اسم تسمية الخيار فقط حصراً: "الخيار أ (A)" أو "الخيار ب (B)" أو "الخيار ج (C)" أو "الخيار د (D)".
        - توزيع الصعوبة: الأسئلة من 1 إلى 7 بمستوى "سهل"، والأسئلة من 8 إلى 15 بمستوى "متوسط".
        
     2. الأسئلة من {mcq_count + 1} إلى {batch_size} (عدد {tf_count} أسئلة):
-       - نوع السؤال (question_type): "صواب وخطأ".
-       - الخيار أ: "True"
-       - الخيار ب: "False"
+       - نوع السؤال (question_type): "صواب أو خطأ".
+       - الخيار أ: "صواب"
+       - الخيار ب: "خطأ"
        - الخيار ج: "" (سلسلة فارغة تماماً)
        - الخيار د: "" (سلسلة فارغة تماماً)
-       - الإجابة الصحيحة (correct_answer): تكون إما "True" أو "False" بدقة (مع موازنة متساوية 50% True و 50% False).
-       - توزيع الصعوبة: الأسئلة من 16 إلى 19 بمستوى "صعب"، والأسئلة من 20 إلى 23 بمستوى "صعب جداً"، والأسئلة 24 و 25 بمستوى "تفوق".
+       - الإجابة الصحيحة (correct_answer): تكون إما "الخيار أ (A)" أو "الخيار ب (B)".
+       - توزيع الصعوبة: مستوى "صعب".
     
     القواعد الصارمة والواجبات الإلزامية:
     1. التأصيل الفني الكامل (100% Grounded): جميع الأسئلة والإجابات والخيارات مستقاة حصراً من النص الفني المرفق دون أي اختلاق.
     2. ذكر اسم المعدة صراحة في نص كل سؤال بدون استثناء (مثال: "في معدة {equipment_name}، ما هو...").
-    3. حقل الإجابة الصحيحة (correct_answer): يجب أن يحتوي على القيمة النصية الدقيقة الكاملة للخيار الصحيح (أو True/False)، ويُحظر منعاً باتاً كتابة حرف الخيار فقط مثل (أ أو ب أو ج أو د).
+    3. حقل الإجابة الصحيحة (correct_answer): يجب أن يحتوي حصراً وبالتطابق التام على واحد من النصوص التالية فقط: "الخيار أ (A)" أو "الخيار ب (B)" أو "الخيار ج (C)" أو "الخيار د (D)".
     4. الشرح والتفسير (explanation): موجز ومركز جداً يوضح باقتضاب سبب صحة الإجابة، أو اتركه فارغاً.
     5. حقل الدرس (lesson): اكتب عنوان المكون الفني المعتمد.
     6. قائمة الكلمات المحظورة (Blacklisted Words): يُحظر تماماً كتابة أو استخدام أي من الكلمات التالية في أي سؤال أو شرح:

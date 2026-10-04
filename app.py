@@ -22,6 +22,7 @@ importlib.reload(file_parsers)
 importlib.reload(gemini_service)
 importlib.reload(excel_builder)
 
+import zipfile
 from file_parsers import extract_source_document, get_pdf_page_count, get_docx_approx_page_count
 from gemini_service import (
     get_genai_client,
@@ -29,7 +30,7 @@ from gemini_service import (
     generate_question_bank,
     generate_syllabus
 )
-from excel_builder import build_workbook
+from excel_builder import build_workbook, build_specialty_program_workbook
 
 # -----------------------------------------------------------------------------
 # Streamlit Page Configuration
@@ -250,9 +251,9 @@ with st.sidebar:
     
     model_name = st.selectbox(
         "النموذج الذكي المعتمد:",
-        options=["gemini-2.5-flash", "gemini-2.5-pro"],
+        options=["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"],
         index=0,
-        help="نموذج gemini-2.5-flash يوفر أقصى سرعة ودقة متطورة لبناء بنوك الأسئلة والمناهج."
+        help="نموذج gemini-3.5-flash يوفر أقصى سرعة ودقة متطورة لبناء بنوك الأسئلة والمناهج."
     )
     
     st.divider()
@@ -321,10 +322,10 @@ st.subheader("🎯 1. اختيار سيناريو العمل")
 scenario_choice = st.radio(
     "حدد وضع التوليد المطلوب:",
     options=[
-        "السيناريو 1: توليد شامل للأقسام الثلاثة (القسم الإعدادي / القسم المتوسط / القسم النهائي) مع فهرس الدروس",
+        "السيناريو 4: منظومة التدريب المتكاملة (برامج التدريب المعتمدة + بنوك الأسئلة الخمسة + برنامج تدريب تخصص)",
+        "السيناريو 1: توليد شامل للأقسام الثلاثة مع فهرس الدروس القياسي (1 : 2 : 25)",
         "السيناريو 2: توليد مخصص لقسم أو دورة محددة فقط",
-        "السيناريو 3: توليد الجدول الزمني وفهرس الدروس فقط (فهرس المحاضرات بدون بنك أسئلة)",
-        "السيناريو 4: قالب برنامج التدريب المعتمد للأقسام (فترات وأيام وامتحانات - نموذج أداة الامتحانات)"
+        "السيناريو 3: توليد الجدول الزمني وفهرس الدروس فقط"
     ],
     index=0
 )
@@ -518,28 +519,136 @@ def render_section_source_selector(sec_key: str, sec_label: str):
 # Structure configuration based on chosen scenario
 sections_setup = []
 
-if "السيناريو 1" in scenario_choice or "السيناريو 4" in scenario_choice:
-    if "السيناريو 4" in scenario_choice:
-        st.info("📋 **قالب برنامج التدريب المعتمد (السيناريو 4):** سيتم توليد وتنسيق الجداول الزمنية وفق هيكل الفترات اليومية (ف1..ف4)، دمج عمود اسم الموضوع، إدراج عمود الساعات (2.0 س) والصفحات (من / الي)، وفواصل امتحانات منتصف وختامي الترم مع المجاميع المعتمدة.")
-    st.write("##### 🎛️ تخصيص الأقسام الثلاثة والمراجع وخيارات تكرار الأسئلة:")
+if "السيناريو 4" in scenario_choice:
+    st.info("📋 **منظومة التدريب المتكاملة (السيناريو 4):** توليد برامج التدريب للأقسام الثلاثة بهيكل الفترات اليومية (الإعدادي فترتان، المتوسط والنهائي 4 فترات)، وبنوك الأسئلة الخمسة المعتمدة بنظام تسمية الخيارات وبيانات التحقق (Data Validation)، ومصنف برنامج تدريب تخصص المعتمد.")
+    
+    col_scope1, col_scope2 = st.columns([1, 1])
+    with col_scope1:
+        s4_gen_mode = st.radio(
+            "نطاق التوليد المطلوب للمنظومة:",
+            options=[
+                "🚀 التوليد المتكامل الشامل (برامج التدريب + بنوك الأسئلة الخمسة 2750 سؤالاً + برنامج تدريب تخصص)",
+                "⚡ التوليد السريع لبرامج التدريب وبرنامج تدريب تخصص فقط (استخراج الموضوعات والساعات بدون توليد بنوك الأسئلة)"
+            ],
+            index=0,
+            help="اختر التوليد السريع لاعتماد وتنسيق خطة التدريب وبرنامج تدريب تخصص في ثوانٍ للاختبار السريع."
+        )
+
+    st.write("##### 🎛️ تخصيص الأقسام الثلاثة والمراجع الفنية والمعدات:")
+    tab_prep, tab_med, tab_fin = st.tabs(["📘 القسم الإعدادي (56 س)", "📙 القسم المتوسط (208 س)", "📕 القسم النهائي (176 س)"])
+    
+    with tab_prep:
+        st.caption("🔹 **القسم الإعدادي:** 14 موضوعاً = 56 ساعة (28 نظري + 28 عملي) | فترتان في اليوم (ف1 نظري، ف2 عملي) | امتحان منتصف الترم بعد اليوم السابع | بنك أسئلة: 350 سؤالاً.")
+        col_lp, col_rp = st.columns([1, 1])
+        with col_lp:
+            lec_prep = st.number_input("عدد موضوعات القسم الإعدادي:", min_value=1, max_value=100, value=14, key="l_prep_s4")
+            st.caption(f"⏱️ الساعات: **{lec_prep * 4} ساعة** (28 س نظري + 28 س عملي) | 📝 بنك الأسئلة: **{lec_prep * 25} سؤالاً**")
+        with col_rp:
+            allow_rep_prep = st.checkbox("🔄 تفعيل خيار تكرار الأسئلة في الإعدادي", value=False, key="rep_prep_s4")
+        files_prep = render_section_source_selector("prep_s4", "القسم الإعدادي")
+        eq_prep = render_section_equipment_selector("prep_s4", "القسم الإعدادي", files_prep, "معدة التخصص الفني")
+        sections_setup.append({
+            "name": "القسم الإعدادي",
+            "lectures": lec_prep,
+            "questions_count": lec_prep * 25,
+            "allow_repetition": allow_rep_prep,
+            "files": files_prep,
+            "equipment_name": eq_prep,
+            "terms": [
+                {
+                    "term_name": "الترم الأول",
+                    "lectures": lec_prep,
+                    "periods_per_day": 2,
+                    "midterm_day": max(1, lec_prep // 2)
+                }
+            ]
+        })
+        
+    with tab_med:
+        st.caption("🔹 **القسم المتوسط:** 52 موضوعاً = 208 ساعات (104 نظري + 104 عملي) | 4 فترات في اليوم: الترم الأول (24 موضوعاً = 96 س - 600 سؤال)، الترم الثاني (28 موضوعاً = 112 س - 700 سؤال).")
+        col_lm1, col_lm2 = st.columns([1, 1])
+        with col_lm1:
+            lec_med_t1 = st.number_input("موضوعات الترم الأول (المتوسط):", min_value=1, max_value=100, value=24, key="l_med_t1")
+            lec_med_t2 = st.number_input("موضوعات الترم الثاني (المتوسط):", min_value=1, max_value=100, value=28, key="l_med_t2")
+            total_med_lec = lec_med_t1 + lec_med_t2
+            st.caption(f"⏱️ إجمالي ساعات المتوسط: **{total_med_lec * 4} ساعة** | 📝 بنك الأسئلة: **{total_med_lec * 25} سؤالاً** (بنكان)")
+        with col_lm2:
+            allow_rep_med = st.checkbox("🔄 تفعيل خيار تكرار الأسئلة في المتوسط", value=False, key="rep_med_s4")
+        files_med = render_section_source_selector("med_s4", "القسم المتوسط")
+        eq_med = render_section_equipment_selector("med_s4", "القسم المتوسط", files_med, "معدة التخصص الفني")
+        sections_setup.append({
+            "name": "القسم المتوسط",
+            "lectures": total_med_lec,
+            "questions_count": total_med_lec * 25,
+            "allow_repetition": allow_rep_med,
+            "files": files_med,
+            "equipment_name": eq_med,
+            "terms": [
+                {
+                    "term_name": "الترم الأول",
+                    "lectures": lec_med_t1,
+                    "periods_per_day": 4,
+                    "midterm_day": 6
+                },
+                {
+                    "term_name": "الترم الثاني",
+                    "lectures": lec_med_t2,
+                    "periods_per_day": 4,
+                    "midterm_day": 7
+                }
+            ]
+        })
+        
+    with tab_fin:
+        st.caption("🔹 **القسم النهائي:** 44 موضوعاً = 176 ساعة (88 نظري + 88 عملي) | 4 فترات في اليوم: الترم الأول (24 موضوعاً = 96 س - 600 سؤال)، الترم الثاني (20 موضوعاً = 80 س - 500 سؤال).")
+        col_lf1, col_lf2 = st.columns([1, 1])
+        with col_lf1:
+            lec_fin_t1 = st.number_input("موضوعات الترم الأول (النهائي):", min_value=1, max_value=100, value=24, key="l_fin_t1")
+            lec_fin_t2 = st.number_input("موضوعات الترم الثاني (النهائي):", min_value=1, max_value=100, value=20, key="l_fin_t2")
+            total_fin_lec = lec_fin_t1 + lec_fin_t2
+            st.caption(f"⏱️ إجمالي ساعات النهائي: **{total_fin_lec * 4} ساعة** | 📝 بنك الأسئلة: **{total_fin_lec * 25} سؤالاً** (بنكان)")
+        with col_lf2:
+            allow_rep_fin = st.checkbox("🔄 تفعيل خيار تكرار الأسئلة في النهائي", value=False, key="rep_fin_s4")
+        files_fin = render_section_source_selector("fin_s4", "القسم النهائي")
+        eq_fin = render_section_equipment_selector("fin_s4", "القسم النهائي", files_fin, "معدة التخصص الفني")
+        sections_setup.append({
+            "name": "القسم النهائي",
+            "lectures": total_fin_lec,
+            "questions_count": total_fin_lec * 25,
+            "allow_repetition": allow_rep_fin,
+            "files": files_fin,
+            "equipment_name": eq_fin,
+            "terms": [
+                {
+                    "term_name": "الترم الأول",
+                    "lectures": lec_fin_t1,
+                    "periods_per_day": 4,
+                    "midterm_day": 6
+                },
+                {
+                    "term_name": "الترم الثاني",
+                    "lectures": lec_fin_t2,
+                    "periods_per_day": 4,
+                    "midterm_day": 5
+                }
+            ]
+        })
+
+elif "السيناريو 1" in scenario_choice:
+    st.write("##### 🎛️ تخصيص الأقسام الثلاثة والمراجع وخيارات تكرار الأسئلة (فهرس قياسي 1 : 2 : 25):")
     tab_prep, tab_med, tab_fin = st.tabs(["📘 القسم الإعدادي", "📙 القسم المتوسط", "📕 القسم النهائي"])
     
     with tab_prep:
         col_lp, col_rp = st.columns([1, 1])
         with col_lp:
-            lec_prep = st.number_input("عدد المحاضرات (السطور الفردية):", min_value=1, max_value=300, value=28, key="l_prep")
+            lec_prep = st.number_input("عدد المحاضرات (السطور الفردية):", min_value=1, max_value=300, value=28, key="l_prep_s1")
             hours_prep = lec_prep * 2
             q_count_prep = lec_prep * 25
             st.caption(f"⏱️ الساعات المخصصة: **{hours_prep} ساعة** (معيار قياسي) | 📝 بنك الأسئلة: **{q_count_prep} سؤالاً** (قاعدة 1 : 2 : 25)")
         with col_rp:
-            allow_rep_prep = st.checkbox(
-                "🔄 تفعيل خيار تكرار الأسئلة في القسم الإعدادي",
-                value=False,
-                key="rep_prep",
-                help="يسمح بتكرار وصياغة أسئلة مفاهيمية لترسيخ المفاهيم الأساسية. عند التعطيل يلتزم النظام بمنع التكرار نهائياً."
-            )
-        files_prep = render_section_source_selector("prep", "القسم الإعدادي")
-        eq_prep = render_section_equipment_selector("prep", "القسم الإعدادي", files_prep, "رادار المراقبة الجوية والملاحة")
+            allow_rep_prep = st.checkbox("🔄 تفعيل خيار تكرار الأسئلة في القسم الإعدادي", value=False, key="rep_prep_s1")
+        files_prep = render_section_source_selector("prep_s1", "القسم الإعدادي")
+        eq_prep = render_section_equipment_selector("prep_s1", "القسم الإعدادي", files_prep, "رادار المراقبة الجوية والملاحة")
         sections_setup.append({
             "name": "القسم الإعدادي",
             "lectures": lec_prep,
@@ -552,19 +661,14 @@ if "السيناريو 1" in scenario_choice or "السيناريو 4" in scenar
     with tab_med:
         col_lm, col_rm = st.columns([1, 1])
         with col_lm:
-            lec_med = st.number_input("عدد المحاضرات (السطور الفردية):", min_value=1, max_value=300, value=56, key="l_med")
+            lec_med = st.number_input("عدد المحاضرات (السطور الفردية):", min_value=1, max_value=300, value=56, key="l_med_s1")
             hours_med = lec_med * 2
             q_count_med = lec_med * 25
             st.caption(f"⏱️ الساعات المخصصة: **{hours_med} ساعة** (معيار قياسي) | 📝 بنك الأسئلة: **{q_count_med} سؤالاً** (قاعدة 1 : 2 : 25)")
         with col_rm:
-            allow_rep_med = st.checkbox(
-                "🔄 تفعيل خيار تكرار الأسئلة في القسم المتوسط",
-                value=False,
-                key="rep_med",
-                help="يسمح بتكرار وصياغة أسئلة مفاهيمية لترسيخ المفاهيم الأساسية. عند التعطيل يلتزم النظام بمنع التكرار نهائياً."
-            )
-        files_med = render_section_source_selector("med", "القسم المتوسط")
-        eq_med = render_section_equipment_selector("med", "القسم المتوسط", files_med, "رادار المراقبة الجوية والملاحة")
+            allow_rep_med = st.checkbox("🔄 تفعيل خيار تكرار الأسئلة في القسم المتوسط", value=False, key="rep_med_s1")
+        files_med = render_section_source_selector("med_s1", "القسم المتوسط")
+        eq_med = render_section_equipment_selector("med_s1", "القسم المتوسط", files_med, "رادار المراقبة الجوية والملاحة")
         sections_setup.append({
             "name": "القسم المتوسط",
             "lectures": lec_med,
@@ -577,19 +681,14 @@ if "السيناريو 1" in scenario_choice or "السيناريو 4" in scenar
     with tab_fin:
         col_lf, col_rf = st.columns([1, 1])
         with col_lf:
-            lec_fin = st.number_input("عدد المحاضرات (السطور الفردية):", min_value=1, max_value=300, value=40, key="l_fin")
+            lec_fin = st.number_input("عدد المحاضرات (السطور الفردية):", min_value=1, max_value=300, value=40, key="l_fin_s1")
             hours_fin = lec_fin * 2
             q_count_fin = lec_fin * 25
             st.caption(f"⏱️ الساعات المخصصة: **{hours_fin} ساعة** (معيار قياسي) | 📝 بنك الأسئلة: **{q_count_fin} سؤالاً** (قاعدة 1 : 2 : 25)")
         with col_rf:
-            allow_rep_fin = st.checkbox(
-                "🔄 تفعيل خيار تكرار الأسئلة في القسم النهائي",
-                value=False,
-                key="rep_fin",
-                help="يسمح بتكرار وصياغة أسئلة مفاهيمية لترسيخ المفاهيم الأساسية. عند التعطيل يلتزم النظام بمنع التكرار نهائياً."
-            )
-        files_fin = render_section_source_selector("fin", "القسم النهائي")
-        eq_fin = render_section_equipment_selector("fin", "القسم النهائي", files_fin, "رادار المراقبة الجوية والملاحة")
+            allow_rep_fin = st.checkbox("🔄 تفعيل خيار تكرار الأسئلة في القسم النهائي", value=False, key="rep_fin_s1")
+        files_fin = render_section_source_selector("fin_s1", "القسم النهائي")
+        eq_fin = render_section_equipment_selector("fin_s1", "القسم النهائي", files_fin, "رادار المراقبة الجوية والملاحة")
         sections_setup.append({
             "name": "القسم النهائي",
             "lectures": lec_fin,
@@ -735,7 +834,210 @@ if generate_clicked:
         # ----------------------------------------------------
         # Scenario Routing & Execution
         # ----------------------------------------------------
-        if "السيناريو 1" in scenario_choice or "السيناريو 4" in scenario_choice:
+        if "السيناريو 4" in scenario_choice:
+            is_fast_mode = "التوليد السريع" in s4_gen_mode
+            all_file_names = list(uploaded_docs_data.keys())
+            
+            # Extract topics for the 5 terms (Prep 14, Med T1 24, Med T2 28, Fin T1 24, Fin T2 20)
+            sec_breakdown_arg = [
+                {
+                    "name": "القسم الإعدادي",
+                    "lectures": 14,
+                    "text": all_extracted_sections_text.get("القسم الإعدادي", "") or combined_corpus,
+                    "reference": " ،".join(sections_setup[0]["files"].keys()) if sections_setup[0]["files"] else "الدليل الفني المعتمد",
+                    "equipment_name": sections_setup[0].get("equipment_name", primary_equipment_name)
+                },
+                {
+                    "name": "القسم المتوسط - ترم أول",
+                    "lectures": 24,
+                    "text": all_extracted_sections_text.get("القسم المتوسط", "") or combined_corpus,
+                    "reference": " ،".join(sections_setup[1]["files"].keys()) if sections_setup[1]["files"] else "الدليل الفني المعتمد",
+                    "equipment_name": sections_setup[1].get("equipment_name", primary_equipment_name)
+                },
+                {
+                    "name": "القسم المتوسط - ترم ثاني",
+                    "lectures": 28,
+                    "text": all_extracted_sections_text.get("القسم المتوسط", "") or combined_corpus,
+                    "reference": " ،".join(sections_setup[1]["files"].keys()) if sections_setup[1]["files"] else "الدليل الفني المعتمد",
+                    "equipment_name": sections_setup[1].get("equipment_name", primary_equipment_name)
+                },
+                {
+                    "name": "القسم النهائي - ترم أول",
+                    "lectures": 24,
+                    "text": all_extracted_sections_text.get("القسم النهائي", "") or combined_corpus,
+                    "reference": " ،".join(sections_setup[2]["files"].keys()) if sections_setup[2]["files"] else "الدليل الفني المعتمد",
+                    "equipment_name": sections_setup[2].get("equipment_name", primary_equipment_name)
+                },
+                {
+                    "name": "القسم النهائي - ترم ثاني",
+                    "lectures": 20,
+                    "text": all_extracted_sections_text.get("القسم النهائي", "") or combined_corpus,
+                    "reference": " ،".join(sections_setup[2]["files"].keys()) if sections_setup[2]["files"] else "الدليل الفني المعتمد",
+                    "equipment_name": sections_setup[2].get("equipment_name", primary_equipment_name)
+                }
+            ]
+            
+            total_syl_lec = 14 + 24 + 28 + 24 + 20 # 110
+            status_text.text(f"3/4: جارٍ استخراج وتنسيق موضوعات التدريب للأقسام الثلاثة ({total_syl_lec} موضوعاً معتمداً)...")
+            generated_syllabus_data = generate_syllabus(
+                client=client,
+                source_text=combined_corpus,
+                equipment_name=primary_equipment_name,
+                total_lectures=total_syl_lec,
+                reference_name=" ،".join(all_file_names) if all_file_names else "الدليل الفني المعتمد",
+                custom_instructions=custom_prompt_rules,
+                sections_breakdown=sec_breakdown_arg
+            )
+            progress_bar.progress(50)
+            
+            all_syl_items = generated_syllabus_data.get("syllabus_items", [])
+            prep_items = all_syl_items[0:14]
+            med_t1_items = all_syl_items[14:38]
+            med_t2_items = all_syl_items[38:66]
+            fin_t1_items = all_syl_items[66:90]
+            fin_t2_items = all_syl_items[90:110]
+            
+            bank_segments = [
+                {"name": "بنك القسم الإعدادي", "items": prep_items, "sec_key": "القسم الإعدادي", "sec_idx": 0},
+                {"name": "بنك المتوسط - ترم أول", "items": med_t1_items, "sec_key": "القسم المتوسط", "sec_idx": 1},
+                {"name": "بنك المتوسط - ترم ثاني", "items": med_t2_items, "sec_key": "القسم المتوسط", "sec_idx": 1},
+                {"name": "بنك النهائي - ترم أول", "items": fin_t1_items, "sec_key": "القسم النهائي", "sec_idx": 2},
+                {"name": "بنك النهائي - ترم ثاني", "items": fin_t2_items, "sec_key": "القسم النهائي", "sec_idx": 2},
+            ]
+            
+            if not is_fast_mode:
+                for b_idx, b_info in enumerate(bank_segments):
+                    b_name = b_info["name"]
+                    b_items = b_info["items"]
+                    b_sec = sections_setup[b_info["sec_idx"]]
+                    b_eq = b_sec.get("equipment_name", primary_equipment_name)
+                    b_rep = b_sec.get("allow_repetition", False)
+                    b_corpus = all_extracted_sections_text.get(b_info["sec_key"], "") or combined_corpus
+                    
+                    status_text.text(f"جارٍ توليد أسئلة [{b_name}] ({len(b_items)} درساً × 25 = {len(b_items)*25} سؤالاً)...")
+                    qb_res = generate_question_bank(
+                        client=client,
+                        source_text=b_corpus,
+                        equipment_name=b_eq,
+                        section_name=b_name,
+                        num_questions=len(b_items) * 25,
+                        custom_instructions=custom_prompt_rules,
+                        syllabus_items=b_items,
+                        allow_repetition=b_rep,
+                        status_callback=lambda msg: status_text.text(msg)
+                    )
+                    qb_res["equipment_name"] = b_eq
+                    generated_qb_list.append(qb_res)
+                    progress_bar.progress(int(50 + (b_idx + 1) * (40 / len(bank_segments))))
+            else:
+                progress_bar.progress(90)
+                status_text.text("⚡ التوليد السريع: تم استخراج وهيكلة الموضوعات بنجاح، جارٍ تجهيز المصنفات المعتمدة...")
+
+            # Build Training Programs configuration
+            s4_sections_setup = [
+                {
+                    "name": "القسم الإعدادي",
+                    "equipment_name": sections_setup[0].get("equipment_name", primary_equipment_name),
+                    "lectures": 14,
+                    "terms": [
+                        {
+                            "term_name": "الترم الأول",
+                            "items": prep_items,
+                            "periods_per_day": 2,
+                            "days_count": 14,
+                            "midterm_day": 7
+                        }
+                    ]
+                },
+                {
+                    "name": "القسم المتوسط",
+                    "equipment_name": sections_setup[1].get("equipment_name", primary_equipment_name),
+                    "lectures": 52,
+                    "terms": [
+                        {
+                            "term_name": "الترم الأول",
+                            "items": med_t1_items,
+                            "periods_per_day": 4,
+                            "days_count": 12,
+                            "midterm_day": 6
+                        },
+                        {
+                            "term_name": "الترم الثاني",
+                            "items": med_t2_items,
+                            "periods_per_day": 4,
+                            "days_count": 14,
+                            "midterm_day": 7
+                        }
+                    ]
+                },
+                {
+                    "name": "القسم النهائي",
+                    "equipment_name": sections_setup[2].get("equipment_name", primary_equipment_name),
+                    "lectures": 44,
+                    "terms": [
+                        {
+                            "term_name": "الترم الأول",
+                            "items": fin_t1_items,
+                            "periods_per_day": 4,
+                            "days_count": 12,
+                            "midterm_day": 6
+                        },
+                        {
+                            "term_name": "الترم الثاني",
+                            "items": fin_t2_items,
+                            "periods_per_day": 4,
+                            "days_count": 10,
+                            "midterm_day": 5
+                        }
+                    ]
+                }
+            ]
+            sections_setup = s4_sections_setup
+            
+            # Specialty sections data for 'برنامج تدريب تخصص'
+            specialty_sections_data = [
+                {
+                    "name": "القسم الإعدادي",
+                    "equipment_name": sections_setup[0].get("equipment_name", primary_equipment_name),
+                    "banner_title": f"موضوعات برنامج تدريب ( القسم الإعدادي ) - تخصص {sections_setup[0].get('equipment_name', primary_equipment_name)}",
+                    "class_label": "الإعدادي",
+                    "total_label": "إجمالي القسم الإعدادي",
+                    "topics": [
+                        {"term": "الترم الأول", "topic": it.get("lesson_name", ""), "th": 2, "pr": 2}
+                        for it in prep_items
+                    ]
+                },
+                {
+                    "name": "القسم المتوسط",
+                    "equipment_name": sections_setup[1].get("equipment_name", primary_equipment_name),
+                    "banner_title": f"موضوعات برنامج تدريب ( القسم المتوسط ) - تخصص {sections_setup[1].get('equipment_name', primary_equipment_name)}",
+                    "class_label": "المتوسط",
+                    "total_label": "إجمالي القسم المتوسط",
+                    "topics": [
+                        {"term": "الترم الأول", "topic": it.get("lesson_name", ""), "th": 2, "pr": 2}
+                        for it in med_t1_items
+                    ] + [
+                        {"term": "الترم الثاني", "topic": it.get("lesson_name", ""), "th": 2, "pr": 2}
+                        for it in med_t2_items
+                    ]
+                },
+                {
+                    "name": "القسم النهائي",
+                    "equipment_name": sections_setup[2].get("equipment_name", primary_equipment_name),
+                    "banner_title": f"موضوعات برنامج تدريب ( القسم النهائي ) - تخصص {sections_setup[2].get('equipment_name', primary_equipment_name)}",
+                    "class_label": "النهائي",
+                    "total_label": "إجمالي القسم النهائي",
+                    "topics": [
+                        {"term": "الترم الأول", "topic": it.get("lesson_name", ""), "th": 2, "pr": 2}
+                        for it in fin_t1_items
+                    ] + [
+                        {"term": "الترم الثاني", "topic": it.get("lesson_name", ""), "th": 2, "pr": 2}
+                        for it in fin_t2_items
+                    ]
+                }
+            ]
+
+        elif "السيناريو 1" in scenario_choice:
             total_syl_lec = sum(s["lectures"] for s in sections_setup)
             all_file_names = list(uploaded_docs_data.keys())
             sec_breakdown_arg = [
@@ -862,12 +1164,12 @@ if generate_clicked:
             progress_bar.progress(90)
 
         # Step 4: Build Workbook
-        if "السيناريو 3" not in scenario_choice:
+        is_scenario_4 = "السيناريو 4" in scenario_choice
+        if "السيناريو 3" not in scenario_choice and not (is_scenario_4 and locals().get("is_fast_mode", False)):
             total_qs = sum(len(qb.get("questions", [])) for qb in generated_qb_list)
             if total_qs == 0:
                 raise RuntimeError("لم يتم توليد أي أسئلة في بنك الأسئلة! يرجى التحقق من مفتاح الـ API ومعدل الاستهلاك اليومي للنماذج.")
 
-        is_scenario_4 = "السيناريو 4" in scenario_choice
         status_text.text("4/4: جارٍ إنشاء مصنف Excel وتطبيق التنسيق اليميني والقواعد المعتمدة...")
         excel_buf = build_workbook(
             syllabus_data=generated_syllabus_data,
@@ -876,16 +1178,33 @@ if generate_clicked:
             training_program_mode=is_scenario_4,
             sections_setup=sections_setup
         )
+
+        specialty_buf = None
+        zip_buf = None
+        clean_eq_fname = "".join([c if c.isalnum() else "_" for c in primary_equipment_name])
+
+        if is_scenario_4 and locals().get("specialty_sections_data"):
+            specialty_buf = build_specialty_program_workbook(primary_equipment_name, specialty_sections_data)
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(f"المصنف_الشامل_المعتمد_{clean_eq_fname}.xlsx", excel_buf.getvalue())
+                zf.writestr(f"برنامج_تدريب_تخصص_{clean_eq_fname}.xlsx", specialty_buf.getvalue())
+            zip_buf.seek(0)
+
         progress_bar.progress(100)
-        status_text.text("✅ اكتملت المعالجة وتطبيق القاعدة الصارمة بنجاح تام!")
+        status_text.text("✅ اكتملت المعالجة وتطبيق النموذج المعتمد بنجاح تام!")
 
         st.session_state.generation_results = {
             "syllabus": generated_syllabus_data,
             "question_banks": generated_qb_list,
             "equipment_name": primary_equipment_name,
+            "specialty_data": locals().get("specialty_sections_data"),
+            "is_scenario_4": is_scenario_4,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
         }
         st.session_state.excel_buffer = excel_buf
+        st.session_state.specialty_buffer = specialty_buf
+        st.session_state.zip_buffer = zip_buf
 
     except Exception as exc:
         st.error(f"❌ حدث خطأ أثناء المعالجة: {str(exc)}")
@@ -898,34 +1217,82 @@ if st.session_state.generation_results and st.session_state.excel_buffer:
     res = st.session_state.generation_results
     st.divider()
     
-    st.subheader("📑 استعراض الجدول الزمني وفهرس الدروس وبنك الأسئلة المعتمد")
+    st.subheader("📑 استعراض وتحميل منظومة التدريب وبنوك الأسئلة المعتمدة")
     
     file_timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     clean_eq_fname = "".join([c if c.isalnum() else "_" for c in res["equipment_name"]])
-    download_filename = f"QuestionBank_Syllabus_{clean_eq_fname}_{file_timestamp}.xlsx"
 
-    col_dl, col_ip = st.columns([1, 2])
-    with col_dl:
+    col_dl1, col_dl2, col_dl3 = st.columns(3)
+    with col_dl1:
         st.download_button(
-            label="📥 تحميل مصنف Excel المعياري (.xlsx)",
+            label="📥 تحميل المصنف الشامل الكامل (.xlsx)",
             data=st.session_state.excel_buffer.getvalue(),
-            file_name=download_filename,
+            file_name=f"المصنف_الشامل_المعتمد_{clean_eq_fname}_{file_timestamp}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
-            use_container_width=True
+            use_container_width=True,
+            help="يحتوي على برامج التدريب للأقسام الثلاثة + بنوك الأسئلة الخمسة + برنامج تدريب تخصص."
         )
-    with col_ip:
-        st.info("تم توثيق وتأمين المصنف وفق قاعدة السطر الفردي الصارمة (1 : 2 : 25) وجاهز للرفع على منظومات إدارة التعلم (LMS).")
+    with col_dl2:
+        if st.session_state.get("specialty_buffer"):
+            st.download_button(
+                label="📥 تحميل ملف برنامج تدريب تخصص (.xlsx)",
+                data=st.session_state.specialty_buffer.getvalue(),
+                file_name=f"برنامج_تدريب_تخصص_{clean_eq_fname}_{file_timestamp}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="secondary",
+                use_container_width=True,
+                help="ملف برنامج تدريب تخصص المستقل المطابق تماماً لنموذج الاعتماد الرسمي."
+            )
+    with col_dl3:
+        if st.session_state.get("zip_buffer"):
+            st.download_button(
+                label="📦 تحميل الحزمة الكاملة (.zip)",
+                data=st.session_state.zip_buffer.getvalue(),
+                file_name=f"حزمة_التدريب_وبنوك_الأسئلة_{clean_eq_fname}_{file_timestamp}.zip",
+                mime="application/zip",
+                type="secondary",
+                use_container_width=True,
+                help="تحميل كلا الملفين داخل أرشيف مضغوط واحد."
+            )
+
+    st.info("✨ تم توثيق وتأمين كافة الملفات والمصنفات وفق النماذج المعتمدة رسمياً ومطابقة 100% لمعايير المنظومة.")
 
     # Tabs for viewing
     tab_titles = []
+    if res.get("specialty_data"):
+        tab_titles.append("📋 جدول برنامج تدريب تخصص")
     if res["syllabus"]:
-        tab_titles.append("📅 الجدول الزمني وفهرس الدروس")
+        tab_titles.append("📅 فهرس الدروس والموضوعات")
     for qb in res["question_banks"]:
-        tab_titles.append(f"📝 بنك أسئلة: {qb['section_name']}")
+        tab_titles.append(f"📝 {qb['section_name']}")
 
     tabs = st.tabs(tab_titles)
     tab_idx = 0
+
+    # 1. Preview Specialty Training Program
+    if res.get("specialty_data") and tab_idx < len(tabs):
+        with tabs[tab_idx]:
+            spec_rows = []
+            for sec_d in res["specialty_data"]:
+                sec_lbl = sec_d.get("name", "")
+                c_lbl = sec_d.get("class_label", "")
+                t_list = sec_d.get("topics", [])
+                for s_idx, t in enumerate(t_list, start=1):
+                    spec_rows.append({
+                        "م": s_idx,
+                        "القسم": sec_lbl,
+                        "اسم الموضوع": t.get("topic", ""),
+                        "السنة الدراسية": c_lbl,
+                        "ساعات نظري": t.get("th", 2),
+                        "ساعات عملي": t.get("pr", 2),
+                        "الترم": t.get("term", "الترم الأول"),
+                        "يصلح للامتحان المنظومة": "يصلح لعدد ساعات النظرى فقط"
+                    })
+            df_spec = pd.DataFrame(spec_rows)
+            st.write(f"**إجمالي موضوعات التخصص المعتمدة:** {len(df_spec)} موضوعاً تدريبياً")
+            st.dataframe(df_spec, use_container_width=True, hide_index=True)
+        tab_idx += 1
 
     # 1. Preview Syllabus
     if res["syllabus"] and tab_idx < len(tabs):
