@@ -260,6 +260,29 @@ FINAL_T2_PAIRS = [
 ]
 
 
+def expand_prep_to_2_periods_per_day(pairs):
+    """
+    For Preparatory section:
+    Only 2 periods per day (ف1: نظري, ف2: عملي):
+    - ف1: نظري (2h)
+    - ف2: عملي (2h)
+    Each lesson gets 1 day (4h total: 2h theory + 2h practical).
+    Total 14 days, 14 lessons = 28 lectures = 56 hours total.
+    """
+    lectures = []
+    for d, pair in enumerate(pairs):
+        day_num = d + 1
+        lectures.append({
+            "day": day_num, "period": "ف1", "type": "theory",
+            "title": pair['title'], "th": 2, "pr": "-", "p_from": pair['p_from'], "p_to": pair['p_to'], "q": 25
+        })
+        lectures.append({
+            "day": day_num, "period": "ف2", "type": "prac",
+            "title": pair['title'], "th": "-", "pr": 2, "p_from": pair['p_from'], "p_to": pair['p_to'], "q": "-"
+        })
+    return lectures
+
+
 def expand_pairs_to_lectures(pairs):
     """
     Expands a list of lesson pairs into individual day periods:
@@ -531,7 +554,7 @@ def main():
     # =========================================================================
     # 1. SHEET: برنامج تدريب - القسم الإعدادي
     # =========================================================================
-    prep_lectures = expand_pairs_to_lectures(PREP_PAIRS)
+    prep_lectures = expand_prep_to_2_periods_per_day(PREP_PAIRS)
     ws_prep = out_wb.create_sheet(title='برنامج تدريب - القسم الإعدادي')
     apply_rtl(ws_prep)
     ws_prep.merge_cells("A1:I1")
@@ -543,7 +566,7 @@ def main():
     render_term_table(ws_prep, start_row=3, term_label="الترم الأول", lectures=prep_lectures,
                       border_cell=border_cell, header_font=header_font, subheader_font=subheader_font,
                       data_font=data_font, header_fill=header_fill, subheader_fill=subheader_fill,
-                      midterm_after_day=4)
+                      midterm_after_day=7)
 
     for col_idx, w in col_w.items():
         ws_prep.column_dimensions[get_column_letter(col_idx)].width = w
