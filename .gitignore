@@ -35,3 +35,8 @@ uploaded_files/
 Thumbs.db
 
 .vercel
+
+# Temporary text dumps, caches & test renders
+*.txt
+*.json
+buk_renders/
