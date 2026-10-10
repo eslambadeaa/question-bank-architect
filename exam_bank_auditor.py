@@ -77,6 +77,126 @@ def normalize_arabic_text(text: str) -> str:
     
     return t.strip()
 
+def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lessons=[]) -> Tuple[List[str], str]:
+    """
+    استكشاف واستخراج تسلسل دروس برنامج التدريب بذكاء شامل:
+    - يتعرف تلقائياً على القسم (إعدادي / متوسط / نهائي) من اسم البنك أو محتواه.
+    - يدعم البرامج المقسمة على شيتات منفصلة أو المجمعة في شيت واحد مقسم أفقياً.
+    - يستكشف عمود الموضوع وعمود المرحلة ديناميكياً ويتجاهل صفوف الإجماليات والترويسات.
+    """
+    combined_ctx = (bank_name or '') + ' ' + ' '.join(bank_lessons[:15])
+    ctx_norm = normalize_arabic_text(combined_ctx)
+    target_stage = None
+    if any(k in ctx_norm for k in ['اعدادي', 'القسم الاعدادي', 'الاعدادي']):
+        target_stage = 'اعدادي'
+    elif any(k in ctx_norm for k in ['متوسط', 'القسم المتوسط', 'المتوسط']):
+        target_stage = 'متوسط'
+    elif any(k in ctx_norm for k in ['نهائي', 'القسم النهائي', 'النهائي']):
+        target_stage = 'نهائي'
+
+    ws = None
+    if prog_sheet and prog_sheet in prog_wb.sheetnames:
+        ws = prog_wb[prog_sheet]
+    elif target_stage:
+        for s in prog_wb.sheetnames:
+            if target_stage in normalize_arabic_text(s):
+                ws = prog_wb[s]
+                break
+
+    if not ws:
+        for s in prog_wb.sheetnames:
+            s_n = normalize_arabic_text(s)
+            if any(w in s_n for w in ['برنامج', 'تدريب', 'خطه', 'تخصص', 'ساعات']):
+                ws = prog_wb[s]
+                break
+
+    if not ws:
+        ws = prog_wb.active
+
+    sheet_title = ws.title
+    topic_col = 2
+    stage_col = None
+    start_r = 1
+
+    header_found = False
+    for r in range(1, min(15, ws.max_row) + 1):
+        for c in range(1, min(15, ws.max_column) + 1):
+            v = normalize_arabic_text(str(ws.cell(r, c).value or ''))
+            if any(w in v for w in ['اسم الموضوع', 'الموضوع', 'الدرس', 'اسم الدرس', 'topic']):
+                topic_col = c
+                start_r = r + 1
+                header_found = True
+        if header_found:
+            for c in range(1, min(15, ws.max_column) + 1):
+                v = normalize_arabic_text(str(ws.cell(r, c).value or ''))
+                if any(w in v for w in ['السنه الدراسيه', 'المرحله', 'القسم', 'الفصل الدراسي', 'stage']):
+                    stage_col = c
+            break
+
+    # إذا لم يتم تحديد target_stage من اسم البنك، نقوم بمطابقة دروس البنك مع أعمدة المراحل في شيت البرنامج
+    if not target_stage and bank_lessons and stage_col:
+        stage_votes = {'اعدادي': 0, 'متوسط': 0, 'نهائي': 0}
+        norm_bank_lessons = [normalize_arabic_text(bl) for bl in bank_lessons if bl]
+        for r in range(start_r, ws.max_row + 1):
+            top_val = ws.cell(r, topic_col).value
+            stg_val = ws.cell(r, stage_col).value
+            if top_val and stg_val:
+                t_norm = normalize_arabic_text(str(top_val))
+                s_norm = normalize_arabic_text(str(stg_val))
+                if t_norm in norm_bank_lessons:
+                    for k in stage_votes:
+                        if k in s_norm:
+                            stage_votes[k] += 1
+        best_stage = max(stage_votes, key=stage_votes.get)
+        if stage_votes[best_stage] > 0:
+            target_stage = best_stage
+
+    extracted = []
+    current_sec = None
+    last_val = None
+    is_sheet_dedicated = target_stage and (target_stage in normalize_arabic_text(sheet_title))
+
+    for r in range(start_r, ws.max_row + 1):
+        row_str = ' '.join(str(ws.cell(r, c).value or '') for c in range(1, min(8, ws.max_column) + 1))
+        row_norm = normalize_arabic_text(row_str)
+        if any(w in row_norm for w in ['اجمالي', 'اجمالي الساعات', 'امتحان']):
+            continue
+
+        if not is_sheet_dedicated:
+            # التحقق من عناوين الأقسام الرئيسية
+            if any(w in row_norm for w in ['موضوعات', 'برنامج تدريب']):
+                if 'اعدادي' in row_norm: current_sec = 'اعدادي'
+                elif 'متوسط' in row_norm: current_sec = 'متوسط'
+                elif 'نهائي' in row_norm: current_sec = 'نهائي'
+                continue
+
+            if stage_col:
+                st_v = normalize_arabic_text(str(ws.cell(r, stage_col).value or ''))
+                if 'اعدادي' in st_v: current_sec = 'اعدادي'
+                elif 'متوسط' in st_v: current_sec = 'متوسط'
+                elif 'نهائي' in st_v: current_sec = 'نهائي'
+
+            # إذا كانت المرحلة الحالية غير محددة بعد أو لا تطابق المرحلة المستهدفة
+            if target_stage:
+                if current_sec is not None and current_sec != target_stage:
+                    continue
+                if current_sec is None:
+                    continue
+
+        name = ws.cell(r, topic_col).value
+        if name and str(name).strip() not in ['', 'None']:
+            n_clean = str(name).strip()
+            if any(w in n_clean for w in ['امتحان', 'إجمالي', 'اجمالي', 'اسم الموضوع']):
+                continue
+            if n_clean in ['نظري', 'مخططات و دوائر كهربائية', 'مخططات ودوائر كهربائية'] or n_clean.isdigit():
+                continue
+            if n_clean != last_val:
+                extracted.append(n_clean)
+                last_val = n_clean
+                last_val = n_clean
+
+    return extracted, sheet_title
+
 def detect_bank_structure(ws) -> Dict[str, Any]:
     """
     استكشاف ذكي وديناميكي لهيكل شيت بنك الأسئلة ومواقع الأعمدة وصف البداية.
@@ -581,49 +701,11 @@ class ExamBankAuditor:
 
     def _audit_syllabus_match(self):
         """مقارنة ومطابقة تسلسل الدروس بين البنك وبرنامج التدريب بدقة 1-to-1 مع مراعاة تكرار الحصص"""
-        prog_lessons = []
-        last_les = None
-        
-        # استكشاف عمود الموضوع والصف الافتتاحي ديناميكياً في شيت البرنامج
-        topic_col = 4
-        start_prog_r = 5
-        max_search_r = min(15, self.ws_program.max_row)
-        max_search_c = min(15, self.ws_program.max_column)
-        
-        found_col = False
-        for r in range(1, max_search_r + 1):
-            for c in range(1, max_search_c + 1):
-                val = str(self.ws_program.cell(r, c).value or '').strip()
-                val_norm = normalize_arabic_text(val)
-                if any(w in val_norm for w in ['اسم الموضوع', 'الموضوع', 'الدرس', 'اسم الدرس', 'topic']):
-                    topic_col = c
-                    start_prog_r = r + 1
-                    found_col = True
-                    break
-            if found_col:
-                break
-
-        for r in range(start_prog_r, self.ws_program.max_row + 1):
-            name = self.ws_program.cell(r, topic_col).value
-            
-            if name and str(name).strip() not in ['', 'None']:
-                name_clean = str(name).strip()
-                # تجاهل صفوف الامتحانات والإجماليات والترويسات المكررة بدقة
-                if any(w in name_clean for w in ['امتحان', 'إجمالي', 'اجمالي', 'اسم الموضوع']):
-                    continue
-                if name_clean in ['نظري', 'مخططات و دوائر كهربائية', 'مخططات ودوائر كهربائية'] or name_clean.isdigit():
-                    continue
-                
-                # تجميع الدروس المتتالية الفريدة
-                if name_clean != last_les:
-                    prog_lessons.append(name_clean)
-                    last_les = name_clean
-                    
-        bank_lessons = []
-        last_bank_les = None
         les_col = self.col_map.get("lesson", 10)
         start_r = self.col_map.get("data_start_row", 2)
         
+        bank_lessons = []
+        last_bank_les = None
         for r in range(start_r, self.ws_questions.max_row + 1):
             les = self.ws_questions.cell(r, les_col).value
             if les:
@@ -631,6 +713,14 @@ class ExamBankAuditor:
                 if les_clean != last_bank_les:
                     bank_lessons.append(les_clean)
                     last_bank_les = les_clean
+
+        prog_lessons, used_sheet = extract_syllabus_lessons(
+            prog_wb=self.prog_wb,
+            prog_sheet=self.program_sheet,
+            bank_name=self.results["file_info"].get("bank_name", ""),
+            bank_lessons=bank_lessons
+        )
+        self.results["file_info"]["program_sheet"] = used_sheet
                     
         mismatches = []
         max_len = max(len(prog_lessons), len(bank_lessons))
@@ -1011,30 +1101,19 @@ class ExamBankFixer:
         if self.program_path and os.path.exists(self.program_path):
             try:
                 p_wb = openpyxl.load_workbook(self.program_path, data_only=True)
-                p_sheet = self.program_sheet if (self.program_sheet and self.program_sheet in p_wb.sheetnames) else p_wb.sheetnames[0]
-                p_ws = p_wb[p_sheet]
+                # تجميع قائمة دروس البنك الحالية للمساعدة في استكشاف القسم
+                b_lessons_probe = []
+                for pr in range(start_r, min(start_r + 50, max_r + 1)):
+                    bv = ws_q.cell(pr, les_col).value
+                    if bv and str(bv).strip():
+                        b_lessons_probe.append(str(bv).strip())
 
-                # استكشاف عمود الموضوع
-                p_topic_col = 4
-                p_start_r = 5
-                for pr in range(1, min(15, p_ws.max_row) + 1):
-                    for pc in range(1, min(15, p_ws.max_column) + 1):
-                        pv = normalize_arabic_text(str(p_ws.cell(pr, pc).value or ''))
-                        if any(w in pv for w in ['اسم الموضوع', 'الموضوع', 'الدرس', 'اسم الدرس', 'topic']):
-                            p_topic_col = pc
-                            p_start_r = pr + 1
-                            break
-
-                last_pl = None
-                for pr in range(p_start_r, p_ws.max_row + 1):
-                    name = p_ws.cell(pr, p_topic_col).value
-                    if name and str(name).strip() not in ['', 'None']:
-                        n_clean = str(name).strip()
-                        if any(w in n_clean for w in ['امتحان', 'إجمالي', 'اجمالي', 'اسم الموضوع']): continue
-                        if n_clean in ['نظري', 'مخططات و دوائر كهربائية', 'مخططات ودوائر كهربائية'] or n_clean.isdigit(): continue
-                        if n_clean != last_pl:
-                            syllabus_order.append(n_clean)
-                            last_pl = n_clean
+                syllabus_order, _ = extract_syllabus_lessons(
+                    prog_wb=p_wb,
+                    prog_sheet=self.program_sheet,
+                    bank_name=os.path.basename(self.bank_path),
+                    bank_lessons=b_lessons_probe
+                )
             except Exception:
                 syllabus_order = []
 
