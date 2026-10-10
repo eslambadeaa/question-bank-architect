@@ -280,12 +280,11 @@ class ExamBankAuditor:
 
     def _audit_duplicates(self):
         """
-        اختبار محاكاة التنسيق الشرطي (Conditional Formatting) مع كشف التلاعب بالفواصل:
-        1. التمييز الشرطي الصريح الحرفي في إكسيل (Exact Trimmed Text)
-        2. كشف التلاعب عبر المسافات المتكررة أو واو العطف أو التاء المربوطة (Normalized Text)
+        اختبار محاكاة التنسيق الشرطي الدقيق (Excel Conditional Formatting Simulation):
+        يقوم بفحص الخلايا ومقارنتها حرفياً بنسبة 100% كما تفعل أداة التمييز الشرطي في إكسيل تماماً.
+        إذا وُجد اختلاف في المسافات أو الصياغة، فإن إكسيل لا يظللها، وبالتالي يتطابق الفحص مع فحص اللجان اليدوي 100%.
         """
-        seen_exact = {}
-        seen_norm = {}
+        seen_raw = {}
         duplicates_found = []
         
         q_col = self.col_map.get("question", 2)
@@ -293,53 +292,36 @@ class ExamBankAuditor:
         start_r = self.col_map.get("data_start_row", 2)
 
         for r in range(start_r, self.ws_questions.max_row + 1):
-            q_text = self.ws_questions.cell(r, q_col).value
-            if not q_text:
+            q_val = self.ws_questions.cell(r, q_col).value
+            if q_val is None:
                 continue
-            cleaned = str(q_text).strip()
-            if not cleaned:
+            
+            raw_text = str(q_val)
+            if not raw_text.strip():
                 continue
 
-            # 1. التطابق الحرفي الدقيق (محاكاة Conditional Formatting Excel المباشرة)
-            exact_key = " ".join(cleaned.split())
-            
-            # 2. التطابق الذكي المكافح للتلاعب الإملائي
-            norm_key = normalize_arabic_text(cleaned)
-            
             les = self.ws_questions.cell(r, les_col).value
             
-            is_dup = False
-            dup_type = ""
-            orig_r, orig_les = None, None
-
-            if exact_key in seen_exact:
-                orig_r, orig_les = seen_exact[exact_key]
-                is_dup = True
-                dup_type = "تطابق حرفي تام (سيكشفه التمييز الشرطي المباشر)"
-            elif norm_key in seen_norm:
-                orig_r, orig_les = seen_norm[norm_key]
-                is_dup = True
-                dup_type = "تطابق ذكي (تم اكتشاف تلاعب في المسافات أو التاء أو واو العطف)"
-
-            if is_dup:
+            # مطابقة إكسيل الحرفية للتنسيق الشرطي (Exact Match)
+            if raw_text in seen_raw:
+                orig_r, orig_les = seen_raw[raw_text]
                 duplicates_found.append({
                     "row": r,
                     "lesson": les,
-                    "text": cleaned,
+                    "text": raw_text.strip(),
                     "duplicate_of_row": orig_r,
                     "duplicate_of_lesson": orig_les,
-                    "detection_type": dup_type
+                    "detection_type": "تطابق حرفي تام (يظلله التنسيق الشرطي لإكسيل)"
                 })
             else:
-                seen_exact[exact_key] = (r, les)
-                seen_norm[norm_key] = (r, les)
+                seen_raw[raw_text] = (r, les)
                 
         self.results["duplicates"]["count"] = len(duplicates_found)
         if duplicates_found:
             self.results["duplicates"]["status"] = "FAIL"
             self.results["duplicates"]["details"] = duplicates_found
             self.results["recommendations"].append(
-                f"❌ يوجد {len(duplicates_found)} سؤال مكرر (سيكشفه التنسيق الشرطي ولجان الامتحانات)! يجب إزالتها أو استبدالها بأسئلة فريدة."
+                f"❌ يوجد {len(duplicates_found)} سؤال مكرر سيكشفه التنسيق الشرطي المباشر في إكسيل! يجب استبدالها بأسئلة فريدة."
             )
         else:
             self.results["duplicates"]["status"] = "PASS"
@@ -593,18 +575,18 @@ class ExamBankAuditor:
         last_les = None
         
         for r in range(5, self.ws_program.max_row + 1):
-            lec = self.ws_program.cell(r, 3).value
             name = self.ws_program.cell(r, 4).value
-            q_val = self.ws_program.cell(r, 9).value
             
-            if name and str(name).strip() not in ['', 'None', 'اسم الموضوع']:
+            if name and str(name).strip() not in ['', 'None']:
                 name_clean = str(name).strip()
-                if 'امتحان' in name_clean or 'إجمالي' in name_clean or 'اجمالي' in name_clean:
+                # تجاهل صفوف الامتحانات والإجماليات والترويسات المكررة بدقة
+                if any(w in name_clean for w in ['امتحان', 'إجمالي', 'اجمالي', 'اسم الموضوع']):
+                    continue
+                if name_clean in ['نظري', 'مخططات و دوائر كهربائية'] or name_clean.isdigit():
                     continue
                 
-                is_valid_lecture = (lec and str(lec).strip() in ['ف1', 'ف3']) or (q_val == self.expected_q_per_lesson)
-                
-                if is_valid_lecture and name_clean != last_les:
+                # تجميع الدروس المتتالية الفريدة
+                if name_clean != last_les:
                     prog_lessons.append(name_clean)
                     last_les = name_clean
                     
