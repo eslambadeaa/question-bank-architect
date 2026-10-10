@@ -168,24 +168,30 @@ def render_audit_tab():
                     st.dataframe(pd.DataFrame(tests_summary), use_container_width=True, hide_index=True)
 
                     # عرض التفاصيل إن وجدت مخالفات
-                    if results["duplicates"]["count"] > 0:
+                    if results.get("duplicates", {}).get("count", 0) > 0:
                         with st.expander(f"❌ تفاصيل الأسئلة المكررة ({results['duplicates']['count']} سؤال)", expanded=True):
-                            df_dups = pd.DataFrame(results["duplicates"]["details"])
+                            df_dups = pd.DataFrame(results["duplicates"].get("details", []))
                             st.dataframe(df_dups, use_container_width=True)
 
-                    if results["forbidden_phrases"]["count"] > 0:
+                    if results.get("forbidden_phrases", {}).get("count", 0) > 0:
                         with st.expander(f"⚠️ تفاصيل العبارات المحظورة في الخيارات ({results['forbidden_phrases']['count']} خيار)", expanded=True):
-                            df_forb = pd.DataFrame(results["forbidden_phrases"]["details"])
+                            df_forb = pd.DataFrame(results["forbidden_phrases"].get("details", []))
                             st.dataframe(df_forb, use_container_width=True)
 
-                    if results["lesson_counts"]["discrepancies"]:
+                    # جدول البيفوت تيبل لموازنة الأسئلة
+                    lesson_pivot = results.get("lesson_counts", {}).get("pivot", [])
+                    has_discrepancy = any(p.get("diff", 0) != 0 for p in lesson_pivot)
+                    if has_discrepancy:
                         with st.expander("⚠️ تفاصيل تفاوت عدد الأسئلة في الدروس عن النصاب المطلوب", expanded=True):
-                            df_disc = pd.DataFrame(results["lesson_counts"]["discrepancies"])
+                            df_disc = pd.DataFrame([p for p in lesson_pivot if p.get("diff", 0) != 0])
                             st.dataframe(df_disc, use_container_width=True)
+                    elif lesson_pivot:
+                        with st.expander(f"📊 عرض جدول البيفوت تيبل لجميع الدروس ({len(lesson_pivot)} درساً - جميعها مكتملة بنصاب {expected_q} سؤال)"):
+                            st.dataframe(pd.DataFrame(lesson_pivot), use_container_width=True)
 
-                    if uploaded_prog and results["syllabus_match"]["mismatches"]:
-                        with st.expander("❌ تفاصيل اختلاف ترتيب الدروس بين البنك والبرنامج", expanded=True):
-                            df_miss = pd.DataFrame(results["syllabus_match"]["mismatches"])
+                    if uploaded_prog and results.get("syllabus_match", {}).get("mismatches", 0) > 0:
+                        with st.expander(f"❌ تفاصيل اختلاف ترتيب الدروس بين البنك والبرنامج ({results['syllabus_match']['mismatches']} نقطة اختلاف)", expanded=True):
+                            df_miss = pd.DataFrame(results["syllabus_match"].get("details", []))
                             st.dataframe(df_miss, use_container_width=True)
 
                     # التوصيات
