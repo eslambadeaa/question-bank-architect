@@ -218,7 +218,12 @@ def render_audit_tab():
 
                     # معالجة التصحيح التلقائي إذا كان مفعلاً
                     if auto_fix_enabled:
-                        fixer = ExamBankFixer(bank_path=bank_tmp_path)
+                        fixer = ExamBankFixer(
+                            bank_path=bank_tmp_path,
+                            program_path=prog_tmp_path,
+                            program_sheet=prog_sheet,
+                            questions_per_lesson=expected_q
+                        )
                         fixed_path = fixer.fix_all()
                         with open(fixed_path, "rb") as f_fix:
                             fixed_bytes = f_fix.read()
