@@ -42,6 +42,41 @@ FORBIDDEN_PHRASES = [
     r'ليس\s+ايا\s+مما\s+سبق'
 ]
 
+def normalize_arabic_text(text: str) -> str:
+    """
+    توحيد ومطابقة النصوص العربية مع مراعاة المرونة الإملائية المقبولة:
+    - توحيد الهمزات (أ, إ, آ -> ا)
+    - توحيد الياء والياء المقصورة (ى -> ي)
+    - توحيد التاء المربوطة والهاء (ة -> ه)
+    - إزالة التشكيل والتطويل والمسافات الزائدة
+    - توحيد واو العطف المتصلة والمنفصلة (مثل 'و وسائل' -> 'ووسائل')
+    """
+    if not text:
+        return ""
+    t = str(text).strip()
+    
+    # إزالة التشكيل
+    t = re.sub(r'[\u064B-\u065F\u0670]', '', t)
+    # إزالة التطويل الكشيدة
+    t = re.sub(r'\u0640', '', t)
+    
+    # توحيد الألفات والهمزات
+    t = re.sub(r'[أإآٱ]', 'ا', t)
+    
+    # توحيد الياء والألف المقصورة
+    t = re.sub(r'[ى]', 'ي', t)
+    
+    # توحيد التاء المربوطة بالهاء
+    t = re.sub(r'[ة]', 'ه', t)
+    
+    # توحيد المسافات المتكررة أولاً
+    t = re.sub(r'\s+', ' ', t)
+    
+    # توحيد واو العطف المنفصلة (مثال: "و وسائل" -> "ووسائل"، "و التقييم" -> "والتقييم")
+    t = re.sub(r'(^|\s)و\s+([^\s])', r'\1و\2', t)
+    
+    return t.strip()
+
 class ExamBankAuditor:
     def __init__(self, bank_path: str, program_path: Optional[str] = None, program_sheet: Optional[str] = None, questions_per_lesson: int = 25):
         self.bank_path = bank_path
@@ -426,14 +461,20 @@ class ExamBankAuditor:
                     bank_lessons.append(les_clean)
                     last_bank_les = les_clean
                     
-        # 3. المقارنة المتتالية المباشرة
+        # 3. المقارنة المتتالية المباشرة مع مراعاة المرونة الإملائية الطبيعية
         mismatches = []
         max_len = max(len(prog_lessons), len(bank_lessons))
         
         for idx in range(max_len):
             p_name = prog_lessons[idx] if idx < len(prog_lessons) else "[غير موجود في البرنامج]"
             b_name = bank_lessons[idx] if idx < len(bank_lessons) else "[غير موجود في البنك]"
-            if p_name != b_name:
+            
+            p_norm = normalize_arabic_text(p_name)
+            b_norm = normalize_arabic_text(b_name)
+            
+            # المقارنة الذكية التي تتسامح مع:
+            # مسافات واو العطف (و وسائل / ووسائل)، الهمزات (أ/ا)، الياء (ى/ي)، التاء المربوطة (ة/ه)
+            if p_norm != b_norm:
                 mismatches.append({
                     "lesson_index": idx + 1,
                     "program_lesson": p_name,
