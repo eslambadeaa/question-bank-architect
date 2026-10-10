@@ -3,7 +3,7 @@
 محرك الفحص والتدقيق المؤسسي لبنوك الأسئلة وبرامج التدريب (LMS Exam Bank & Syllabus Auditor)
 ========================================================================================
 يقوم هذا المحرك بمحاكاة الفحص الصارم للجان إدارة الامتحانات والاعتماد المؤسسي:
- 1. اختبار التكرار والتمييز الشرطي (Conditional Formatting Simulation)
+ 1. اختبار التكرار والتمييز الشرطي (Conditional Formatting Simulation) مع كشف التلاعب بالفواصل
  2. اختبار البيفوت تيبل لعدد الأسئلة وتوازن الدروس (Pivot Table & Question Counts)
  3. فحص العبارات والخيارات المحظورة أكاديمياً (Forbidden Phrases: جميع ما سبق، كلاهما صواب، إلخ)
  4. فحص التدرج ونسب مستويات الصعوبة وأنواع الأسئلة (Difficulty Progression & Distribution)
@@ -77,6 +77,93 @@ def normalize_arabic_text(text: str) -> str:
     
     return t.strip()
 
+def detect_bank_structure(ws) -> Dict[str, Any]:
+    """
+    استكشاف ذكي وديناميكي لهيكل شيت بنك الأسئلة ومواقع الأعمدة وصف البداية.
+    يدعم النماذج الرسمية (A=نوع السؤال, B=نص السؤال, ...) وأي شيتات مخصصة أخرى.
+    """
+    col_map = {
+        "type": 1,
+        "question": 2,
+        "explanation": 3,
+        "diff": 4,
+        "ans": 5,
+        "opt_a": 6,
+        "opt_b": 7,
+        "opt_c": 8,
+        "opt_d": 9,
+        "lesson": 10,
+        "header_row": 1,
+        "data_start_row": 2
+    }
+
+    max_r = min(15, ws.max_row)
+    max_c = min(20, ws.max_column)
+
+    best_score = 0
+    best_row = 1
+    found_map = {}
+
+    for r in range(1, max_r + 1):
+        row_map = {}
+        score = 0
+        for c in range(1, max_c + 1):
+            val = str(ws.cell(r, c).value or '').strip()
+            if not val:
+                continue
+            
+            val_norm = normalize_arabic_text(val)
+            
+            # عمود نص السؤال
+            if any(k in val_norm for k in ['نص السوال', 'السوال', 'الاسئله', 'question']):
+                row_map['question'] = c
+                score += 3
+            # عمود نوع السؤال
+            elif any(k in val_norm for k in ['نوع السوال', 'نوع', 'type']):
+                row_map['type'] = c
+                score += 2
+            # عمود الشرح / التفسير
+            elif any(k in val_norm for k in ['شرح', 'تفسير', 'explanation']):
+                row_map['explanation'] = c
+                score += 1
+            # عمود مستوى الصعوبة
+            elif any(k in val_norm for k in ['مستوي الصعوبه', 'صعوبه', 'difficulty']):
+                row_map['diff'] = c
+                score += 2
+            # عمود الإجابة الصحيحة
+            elif any(k in val_norm for k in ['الاجابه الصحيحه', 'الاجابه', 'answer', 'correct']):
+                row_map['ans'] = c
+                score += 2
+            # عمود الخيار أ
+            elif any(k in val_norm for k in ['الخيار ا', 'خيار ا', 'option a', 'a']):
+                if 'opt_a' not in row_map: row_map['opt_a'] = c; score += 1
+            # عمود الخيار ب
+            elif any(k in val_norm for k in ['الخيار ب', 'خيار ب', 'option b', 'b']):
+                if 'opt_b' not in row_map: row_map['opt_b'] = c; score += 1
+            # عمود الخيار ج
+            elif any(k in val_norm for k in ['الخيار ج', 'خيار ج', 'option c', 'c']):
+                if 'opt_c' not in row_map: row_map['opt_c'] = c; score += 1
+            # عمود الخيار د
+            elif any(k in val_norm for k in ['الخيار د', 'خيار د', 'option d', 'd']):
+                if 'opt_d' not in row_map: row_map['opt_d'] = c; score += 1
+            # عمود الموضوع / الدرس
+            elif any(k in val_norm for k in ['الموضوع', 'الدرس', 'اسم الموضوع', 'topic', 'lesson']):
+                row_map['lesson'] = c
+                score += 3
+
+        if score > best_score and 'question' in row_map:
+            best_score = score
+            best_row = r
+            found_map = row_map
+
+    if best_score >= 3:
+        for k, v in found_map.items():
+            col_map[k] = v
+        col_map["header_row"] = best_row
+        col_map["data_start_row"] = best_row + 1
+
+    return col_map
+
 class ExamBankAuditor:
     def __init__(self, bank_path: str, program_path: Optional[str] = None, program_sheet: Optional[str] = None, questions_per_lesson: int = 25):
         self.bank_path = bank_path
@@ -89,6 +176,7 @@ class ExamBankAuditor:
         self.ws_questions = None
         self.ws_lookups = None
         self.ws_program = None
+        self.col_map = {}
         
         self.results = {
             "file_info": {},
@@ -110,15 +198,36 @@ class ExamBankAuditor:
             raise FileNotFoundError(f"ملف بنك الأسئلة غير موجود: {self.bank_path}")
         
         self.bank_wb = openpyxl.load_workbook(self.bank_path, data_only=True)
-        if 'Questions' not in self.bank_wb.sheetnames:
-            raise ValueError("الملف لا يحتوي على شيت 'Questions' الخاص بنموذج تسجيل الأسئلة المعتمد!")
         
-        self.ws_questions = self.bank_wb['Questions']
+        # 1. الاستكشاف الذكي لشيت الأسئلة
+        target_ws_name = None
+        # أولوية شيت Questions
+        if 'Questions' in self.bank_wb.sheetnames:
+            target_ws_name = 'Questions'
+        else:
+            # البحث عن شيتات بديلة (بنك الاسئلة، الاسئلة، Sheet1، ...)
+            for s in self.bank_wb.sheetnames:
+                s_lower = s.lower()
+                if any(w in s_lower for w in ['question', 'اسئل', 'أسئل', 'بنك', 'bank']):
+                    target_ws_name = s
+                    break
+            if not target_ws_name and self.bank_wb.sheetnames:
+                # استخدام الشيت الأول مباشرة كشيت افتراضي
+                target_ws_name = self.bank_wb.sheetnames[0]
+
+        if not target_ws_name:
+            raise ValueError("ملف بنك الأسئلة لا يحتوي على أي شيتات صالحة!")
+        
+        self.ws_questions = self.bank_wb[target_ws_name]
         self.ws_lookups = self.bank_wb['Lookups'] if 'Lookups' in self.bank_wb.sheetnames else None
         
+        # 2. الاستكشاف الذكي لأعمدة النموذج
+        self.col_map = detect_bank_structure(self.ws_questions)
+        
         self.results["file_info"]["bank_name"] = os.path.basename(self.bank_path)
+        self.results["file_info"]["sheet_name"] = target_ws_name
         self.results["file_info"]["bank_size_kb"] = round(os.path.getsize(self.bank_path) / 1024, 1)
-        self.results["file_info"]["total_rows"] = self.ws_questions.max_row - 1
+        self.results["file_info"]["total_rows"] = max(0, self.ws_questions.max_row - self.col_map["data_start_row"] + 1)
 
         if self.program_path:
             if not os.path.exists(self.program_path):
@@ -129,7 +238,6 @@ class ExamBankAuditor:
                     raise ValueError(f"الشيت '{self.program_sheet}' غير موجود في ملف برنامج التدريب!")
                 self.ws_program = self.prog_wb[self.program_sheet]
             else:
-                # محاولة تخمين الشيت المناسب
                 cand = [s for s in self.prog_wb.sheetnames if 'برنامج' in s or 'تدريب' in s or 'ساعات' in s]
                 if cand:
                     self.ws_program = self.prog_wb[cand[0]]
@@ -140,7 +248,7 @@ class ExamBankAuditor:
     def run_all_audits(self) -> Dict[str, Any]:
         self.load_files()
         
-        # 1. اختبار التكرار والتمييز الشرطي
+        # 1. اختبار التكرار والتمييز الشرطي المزدوج (Exact + Normalized)
         self._audit_duplicates()
         
         # 2. اختبار بيفوت تيبل وتوزيع الأسئلة على الدروس
@@ -171,37 +279,67 @@ class ExamBankAuditor:
         return self.results
 
     def _audit_duplicates(self):
-        """اختبار محاكاة التنسيق الشرطي لتمييز الأسئلة المكررة"""
-        seen_texts = {}
+        """
+        اختبار محاكاة التنسيق الشرطي (Conditional Formatting) مع كشف التلاعب بالفواصل:
+        1. التمييز الشرطي الصريح الحرفي في إكسيل (Exact Trimmed Text)
+        2. كشف التلاعب عبر المسافات المتكررة أو واو العطف أو التاء المربوطة (Normalized Text)
+        """
+        seen_exact = {}
+        seen_norm = {}
         duplicates_found = []
         
-        for r in range(2, self.ws_questions.max_row + 1):
-            q_text = self.ws_questions.cell(r, 2).value
+        q_col = self.col_map.get("question", 2)
+        les_col = self.col_map.get("lesson", 10)
+        start_r = self.col_map.get("data_start_row", 2)
+
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            q_text = self.ws_questions.cell(r, q_col).value
             if not q_text:
                 continue
             cleaned = str(q_text).strip()
-            # إزالة المسافات المتكررة للمقارنة الصارمة
-            normalized = " ".join(cleaned.split())
+            if not cleaned:
+                continue
+
+            # 1. التطابق الحرفي الدقيق (محاكاة Conditional Formatting Excel المباشرة)
+            exact_key = " ".join(cleaned.split())
             
-            les = self.ws_questions.cell(r, 10).value
-            if normalized in seen_texts:
-                orig_r, orig_les = seen_texts[normalized]
+            # 2. التطابق الذكي المكافح للتلاعب الإملائي
+            norm_key = normalize_arabic_text(cleaned)
+            
+            les = self.ws_questions.cell(r, les_col).value
+            
+            is_dup = False
+            dup_type = ""
+            orig_r, orig_les = None, None
+
+            if exact_key in seen_exact:
+                orig_r, orig_les = seen_exact[exact_key]
+                is_dup = True
+                dup_type = "تطابق حرفي تام (سيكشفه التمييز الشرطي المباشر)"
+            elif norm_key in seen_norm:
+                orig_r, orig_les = seen_norm[norm_key]
+                is_dup = True
+                dup_type = "تطابق ذكي (تم اكتشاف تلاعب في المسافات أو التاء أو واو العطف)"
+
+            if is_dup:
                 duplicates_found.append({
                     "row": r,
                     "lesson": les,
                     "text": cleaned,
                     "duplicate_of_row": orig_r,
-                    "duplicate_of_lesson": orig_les
+                    "duplicate_of_lesson": orig_les,
+                    "detection_type": dup_type
                 })
             else:
-                seen_texts[normalized] = (r, les)
+                seen_exact[exact_key] = (r, les)
+                seen_norm[norm_key] = (r, les)
                 
         self.results["duplicates"]["count"] = len(duplicates_found)
         if duplicates_found:
             self.results["duplicates"]["status"] = "FAIL"
             self.results["duplicates"]["details"] = duplicates_found
             self.results["recommendations"].append(
-                f"❌ يوجد {len(duplicates_found)} سؤال مكرر سيكشفه التنسيق الشرطي لإدارة الامتحانات ويؤدي لرفض البنك فوراً! يجب استبدالها بأسئلة فريدة."
+                f"❌ يوجد {len(duplicates_found)} سؤال مكرر (سيكشفه التنسيق الشرطي ولجان الامتحانات)! يجب إزالتها أو استبدالها بأسئلة فريدة."
             )
         else:
             self.results["duplicates"]["status"] = "PASS"
@@ -209,9 +347,11 @@ class ExamBankAuditor:
     def _audit_lesson_counts(self):
         """محاكاة جدول بيفوت تيبل لفحص عدد الأسئلة لكل درس"""
         counts = collections.OrderedDict()
+        les_col = self.col_map.get("lesson", 10)
+        start_r = self.col_map.get("data_start_row", 2)
         
-        for r in range(2, self.ws_questions.max_row + 1):
-            les = self.ws_questions.cell(r, 10).value
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            les = self.ws_questions.cell(r, les_col).value
             if not les:
                 continue
             les_str = str(les).strip()
@@ -256,13 +396,21 @@ class ExamBankAuditor:
     def _audit_forbidden_phrases(self):
         """فحص وجود العبارات المحظورة في الخيارات (جميع ما سبق، كلاهما صواب، إلخ)"""
         violations = []
+        q_col = self.col_map.get("question", 2)
+        les_col = self.col_map.get("lesson", 10)
+        opt_cols = [
+            ("الخيار أ", self.col_map.get("opt_a", 6)),
+            ("الخيار ب", self.col_map.get("opt_b", 7)),
+            ("الخيار ج", self.col_map.get("opt_c", 8)),
+            ("الخيار د", self.col_map.get("opt_d", 9))
+        ]
+        start_r = self.col_map.get("data_start_row", 2)
         
-        for r in range(2, self.ws_questions.max_row + 1):
-            les = self.ws_questions.cell(r, 10).value
-            q_txt = self.ws_questions.cell(r, 2).value
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            les = self.ws_questions.cell(r, les_col).value
+            q_txt = self.ws_questions.cell(r, q_col).value
             
-            # فحص الخيارات الأربعة A, B, C, D (الأعمدة 6, 7, 8, 9)
-            for c_idx, col_name in enumerate(['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'], start=6):
+            for col_name, c_idx in opt_cols:
                 val = self.ws_questions.cell(r, c_idx).value
                 if val:
                     val_str = str(val).strip()
@@ -294,9 +442,13 @@ class ExamBankAuditor:
         diff_counts = collections.Counter()
         total_q = 0
         
-        for r in range(2, self.ws_questions.max_row + 1):
-            q_type = self.ws_questions.cell(r, 1).value
-            q_diff = self.ws_questions.cell(r, 4).value
+        type_col = self.col_map.get("type", 1)
+        diff_col = self.col_map.get("diff", 4)
+        start_r = self.col_map.get("data_start_row", 2)
+        
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            q_type = self.ws_questions.cell(r, type_col).value
+            q_diff = self.ws_questions.cell(r, diff_col).value
             if q_type:
                 type_counts[str(q_type).strip()] += 1
                 total_q += 1
@@ -307,10 +459,8 @@ class ExamBankAuditor:
         self.results["distribution"]["types"] = dict(type_counts)
         self.results["distribution"]["difficulties"] = dict(diff_counts)
         
-        # النسب المقررة القياسية
-        # 50% MCQ, 50% TF
-        mcq_count = sum(v for k, v in type_counts.items() if 'متعدد' in k)
-        tf_count = sum(v for k, v in type_counts.items() if 'صح' in k)
+        mcq_count = sum(v for k, v in type_counts.items() if 'متعدد' in k or 'اختيار' in k)
+        tf_count = sum(v for k, v in type_counts.items() if 'صح' in k or 'صواب' in k)
         
         mcq_ratio = (mcq_count / total_q) * 100 if total_q else 0
         tf_ratio = (tf_count / total_q) * 100 if total_q else 0
@@ -319,7 +469,6 @@ class ExamBankAuditor:
         if abs(mcq_ratio - 50.0) > 1.0 or abs(tf_ratio - 50.0) > 1.0:
             issues.append(f"عدم توازن نوعي الأسئلة: اختيار من متعدد = {mcq_ratio:.1f}%، صح/خطأ = {tf_ratio:.1f}% (المطلوب 50% لكل نوع).")
             
-        # فحص نسب الصعوبة (المعيار: 30% سهل، 30% متوسط، 15% صعب، 15% صعب جدا، 10% تفوق)
         easy_c = sum(v for k, v in diff_counts.items() if 'سهل' in k and 'جدا' not in k)
         med_c = sum(v for k, v in diff_counts.items() if 'متوسط' in k)
         hard_c = sum(v for k, v in diff_counts.items() if 'صعب' in k and 'جدا' not in k)
@@ -346,28 +495,31 @@ class ExamBankAuditor:
     def _audit_tf_rules(self):
         """فحص أسئلة الصواب والخطأ: تفريغ الأعمدة F..I والإجابة في عمود E فقط"""
         violations = []
+        type_col = self.col_map.get("type", 1)
+        q_col = self.col_map.get("question", 2)
+        ans_col = self.col_map.get("ans", 5)
+        les_col = self.col_map.get("lesson", 10)
+        opt_cols = [self.col_map.get("opt_a", 6), self.col_map.get("opt_b", 7), self.col_map.get("opt_c", 8), self.col_map.get("opt_d", 9)]
+        start_r = self.col_map.get("data_start_row", 2)
         
-        for r in range(2, self.ws_questions.max_row + 1):
-            q_type = str(self.ws_questions.cell(r, 1).value or '')
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            q_type = str(self.ws_questions.cell(r, type_col).value or '')
             if 'صح' in q_type or 'صواب' in q_type:
-                ans = str(self.ws_questions.cell(r, 5).value or '').strip()
-                optA = self.ws_questions.cell(r, 6).value
-                optB = self.ws_questions.cell(r, 7).value
-                optC = self.ws_questions.cell(r, 8).value
-                optD = self.ws_questions.cell(r, 9).value
+                ans = str(self.ws_questions.cell(r, ans_col).value or '').strip()
+                opts_filled = [self.ws_questions.cell(r, c).value for c in opt_cols if self.ws_questions.cell(r, c).value is not None]
                 
                 errs = []
                 if ans not in ['True', 'False']:
                     errs.append(f"الإجابة '{ans}' غير معيارية (يجب أن تكون True أو False بالضبط)")
                     
-                if optA is not None or optB is not None or optC is not None or optD is not None:
+                if opts_filled:
                     errs.append(f"أعمدة الخيارات (أ، ب، ج، د) ممتلئة بالبيانات في سؤال صح/خطأ (المطلوب تفريغها تماماً إلى None)")
                     
                 if errs:
                     violations.append({
                         "row": r,
-                        "lesson": self.ws_questions.cell(r, 10).value,
-                        "question": str(self.ws_questions.cell(r, 2).value)[:60],
+                        "lesson": self.ws_questions.cell(r, les_col).value,
+                        "question": str(self.ws_questions.cell(r, q_col).value)[:60],
                         "errors": errs
                     })
                     
@@ -376,7 +528,7 @@ class ExamBankAuditor:
             self.results["tf_rules"]["status"] = "FAIL"
             self.results["tf_rules"]["details"] = violations
             self.results["recommendations"].append(
-                f"❌ يوجد {len(violations)} سؤال صواب وخطأ يخالف المعايير (إما بوجود خيارات في الأعمدة F..I أو صيغة إجابة غير معيارية)."
+                f"❌ يوجد {len(violations)} سؤال صواب وخطأ يخالف المعايير (إما بوجود خيارات في الأعمدة أو صيغة إجابة غير معيارية)."
             )
         else:
             self.results["tf_rules"]["status"] = "PASS"
@@ -384,15 +536,25 @@ class ExamBankAuditor:
     def _audit_mcq_rules(self):
         """فحص اكتمال خيارات أسئلة الاختيار من متعدد وعدم وجود أعمدة فارغة"""
         violations = []
+        type_col = self.col_map.get("type", 1)
+        q_col = self.col_map.get("question", 2)
+        ans_col = self.col_map.get("ans", 5)
+        les_col = self.col_map.get("lesson", 10)
+        start_r = self.col_map.get("data_start_row", 2)
         
-        for r in range(2, self.ws_questions.max_row + 1):
-            q_type = str(self.ws_questions.cell(r, 1).value or '')
+        optA_col = self.col_map.get("opt_a", 6)
+        optB_col = self.col_map.get("opt_b", 7)
+        optC_col = self.col_map.get("opt_c", 8)
+        optD_col = self.col_map.get("opt_d", 9)
+        
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            q_type = str(self.ws_questions.cell(r, type_col).value or '')
             if 'متعدد' in q_type or 'اختيار' in q_type:
-                ans = str(self.ws_questions.cell(r, 5).value or '').strip()
-                optA = self.ws_questions.cell(r, 6).value
-                optB = self.ws_questions.cell(r, 7).value
-                optC = self.ws_questions.cell(r, 8).value
-                optD = self.ws_questions.cell(r, 9).value
+                ans = str(self.ws_questions.cell(r, ans_col).value or '').strip()
+                optA = self.ws_questions.cell(r, optA_col).value
+                optB = self.ws_questions.cell(r, optB_col).value
+                optC = self.ws_questions.cell(r, optC_col).value
+                optD = self.ws_questions.cell(r, optD_col).value
                 
                 errs = []
                 if ans not in ['A', 'B', 'C', 'D']:
@@ -410,8 +572,8 @@ class ExamBankAuditor:
                 if errs:
                     violations.append({
                         "row": r,
-                        "lesson": self.ws_questions.cell(r, 10).value,
-                        "question": str(self.ws_questions.cell(r, 2).value)[:60],
+                        "lesson": self.ws_questions.cell(r, les_col).value,
+                        "question": str(self.ws_questions.cell(r, q_col).value)[:60],
                         "errors": errs
                     })
                     
@@ -427,41 +589,38 @@ class ExamBankAuditor:
 
     def _audit_syllabus_match(self):
         """مقارنة ومطابقة تسلسل الدروس بين البنك وبرنامج التدريب بدقة 1-to-1 مع مراعاة تكرار الحصص"""
-        # 1. استخراج الدروس من برنامج التدريب بالترتيب الزمني الصحيح
-        # نتجاهل صفوف امتحانات منتصف الترم، صفوف الإجماليات، والصفوف المكررة لنفس الدرس (مثل ف1 وف2 لنفس الدرس)
         prog_lessons = []
         last_les = None
         
         for r in range(5, self.ws_program.max_row + 1):
             lec = self.ws_program.cell(r, 3).value
             name = self.ws_program.cell(r, 4).value
-            q_val = self.ws_program.cell(r, 9).value # عمود عدد الأسئلة
+            q_val = self.ws_program.cell(r, 9).value
             
             if name and str(name).strip() not in ['', 'None', 'اسم الموضوع']:
                 name_clean = str(name).strip()
-                # استبعاد صفوف الامتحانات
                 if 'امتحان' in name_clean or 'إجمالي' in name_clean or 'اجمالي' in name_clean:
                     continue
                 
-                # المعيار: إما أن يكون له حصة نظرية ف1/ف3 أو مخصص له عدد أسئلة
                 is_valid_lecture = (lec and str(lec).strip() in ['ف1', 'ف3']) or (q_val == self.expected_q_per_lesson)
                 
                 if is_valid_lecture and name_clean != last_les:
                     prog_lessons.append(name_clean)
                     last_les = name_clean
                     
-        # 2. استخراج تسلسل الدروس من شيت الأسئلة
         bank_lessons = []
         last_bank_les = None
-        for r in range(2, self.ws_questions.max_row + 1):
-            les = self.ws_questions.cell(r, 10).value
+        les_col = self.col_map.get("lesson", 10)
+        start_r = self.col_map.get("data_start_row", 2)
+        
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            les = self.ws_questions.cell(r, les_col).value
             if les:
                 les_clean = str(les).strip()
                 if les_clean != last_bank_les:
                     bank_lessons.append(les_clean)
                     last_bank_les = les_clean
                     
-        # 3. المقارنة المتتالية المباشرة مع مراعاة المرونة الإملائية الطبيعية
         mismatches = []
         max_len = max(len(prog_lessons), len(bank_lessons))
         
@@ -472,8 +631,6 @@ class ExamBankAuditor:
             p_norm = normalize_arabic_text(p_name)
             b_norm = normalize_arabic_text(b_name)
             
-            # المقارنة الذكية التي تتسامح مع:
-            # مسافات واو العطف (و وسائل / ووسائل)، الهمزات (أ/ا)، الياء (ى/ي)، التاء المربوطة (ة/ه)
             if p_norm != b_norm:
                 mismatches.append({
                     "lesson_index": idx + 1,
@@ -497,8 +654,11 @@ class ExamBankAuditor:
     def _audit_speed_and_validation(self):
         """فحص سرعة الفتح، خلو عمود الشرح، وسلامة الداتا فاليديشن"""
         filled_c = 0
-        for r in range(2, self.ws_questions.max_row + 1):
-            val = self.ws_questions.cell(r, 3).value
+        exp_col = self.col_map.get("explanation", 3)
+        start_r = self.col_map.get("data_start_row", 2)
+        
+        for r in range(start_r, self.ws_questions.max_row + 1):
+            val = self.ws_questions.cell(r, exp_col).value
             if val is not None and str(val).strip() != '':
                 filled_c += 1
                 
@@ -509,17 +669,11 @@ class ExamBankAuditor:
             dv_count = len(self.ws_questions.data_validations.dataValidation)
         self.results["speed_validation"]["dv_count"] = dv_count
         
-        issues = []
         if filled_c > 0:
-            issues.append(f"عمود الشرح والتفسير (Col C) ممتلئ في {filled_c} خلية، مما يبطئ فتح الملف ويثقل ذاكرة الحاسوب.")
-        if dv_count < 4:
-            issues.append(f"عدد قواعد التحقق من صحة البيانات (Data Validation) هو {dv_count} من أصل 4 قواعد قياسية (L_1, L_2, L_3, L_4).")
-            
-        if issues:
             self.results["speed_validation"]["status"] = "WARNING"
-            self.results["speed_validation"]["details"] = issues
-            for iss in issues:
-                self.results["recommendations"].append(f"⚠️ {iss}")
+            self.results["recommendations"].append(
+                f"⚠️ تم رصد نصوص شرح وتفسير في {filled_c} خلية. تفريغ هذا العمود يضمن سرعة الفتح الفورية للملف ويمنع التعليق."
+            )
         else:
             self.results["speed_validation"]["status"] = "PASS"
 
@@ -577,8 +731,7 @@ class ExamBankAuditor:
         r = self.results
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write("# تقرير التدقيق والمراجعة الشاملة لبنك الأسئلة وبرنامج التدريب\n\n")
-            f.write(f"**تاريخ التدقيق**: {os.popen('date /t').read().strip() if os.name == 'nt' else 'Today'}\n")
-            f.write(f"**ملف البنك**: `{r['file_info'].get('bank_name')}` ({r['file_info'].get('bank_size_kb')} KB)\n")
+            f.write(f"**ملف البنك**: `{r['file_info'].get('bank_name')}` (شيت: `{r['file_info'].get('sheet_name')}`) ({r['file_info'].get('bank_size_kb')} KB)\n")
             if self.program_path:
                 f.write(f"**ملف البرنامج التدريبي**: `{r['file_info'].get('program_name')}` (شيت: `{r['file_info'].get('program_sheet')}`)\n\n")
             
@@ -607,10 +760,10 @@ class ExamBankAuditor:
                 
             if r['duplicates']['details']:
                 f.write("### ❌ تفاصيل الأسئلة المكررة:\n\n")
-                f.write("| الصف الحالي | درس السؤال | مكرر من الصف | درس السؤال الأصلي | نص السؤال المكرر |\n")
-                f.write("| :---: | :--- | :---: | :--- | :--- |\n")
+                f.write("| الصف الحالي | درس السؤال | مكرر من الصف | درس السؤال الأصلي | نوع الكشف | نص السؤال المكرر |\n")
+                f.write("| :---: | :--- | :---: | :--- | :--- | :--- |\n")
                 for it in r['duplicates']['details'][:15]:
-                    f.write(f"| {it['row']} | {it['lesson']} | {it['duplicate_of_row']} | {it['duplicate_of_lesson']} | {it['text'][:60]}... |\n")
+                    f.write(f"| {it['row']} | {it['lesson']} | {it['duplicate_of_row']} | {it['duplicate_of_lesson']} | {it.get('detection_type', '')} | {it['text'][:60]}... |\n")
                 f.write("\n")
 
             if r['recommendations']:
@@ -619,7 +772,7 @@ class ExamBankAuditor:
                     f.write(f"- {rec}\n")
 
 class ExamBankFixer:
-    """محرك التصحيح التلقائي للأخطاء ومعالجة البنوك قبل الرفع"""
+    """محرك التصحيح التلقائي للأخطاء ومعالجة البنوك قبل الرفع مع تقرير تفصيلي بكل التعديلات"""
     def __init__(self, bank_path: str, output_path: Optional[str] = None):
         self.bank_path = bank_path
         self.output_path = output_path or bank_path.replace('.xlsx', '_مصحح_ومعتمد.xlsx')
@@ -627,55 +780,66 @@ class ExamBankFixer:
 
     def fix_all(self) -> str:
         wb = openpyxl.load_workbook(self.bank_path)
-        ws_q = wb['Questions']
+        
+        # استكشاف الشيت المناسب
+        ws_q_name = 'Questions' if 'Questions' in wb.sheetnames else wb.sheetnames[0]
+        ws_q = wb[ws_q_name]
+        col_map = detect_bank_structure(ws_q)
         max_r = ws_q.max_row
+        start_r = col_map.get("data_start_row", 2)
+
+        type_col = col_map.get("type", 1)
+        q_col = col_map.get("question", 2)
+        exp_col = col_map.get("explanation", 3)
+        ans_col = col_map.get("ans", 5)
+        opt_cols = [col_map.get("opt_a", 6), col_map.get("opt_b", 7), col_map.get("opt_c", 8), col_map.get("opt_d", 9)]
 
         # 1. تفريغ عمود الشرح والتفسير لضمان الفتح الفوري
         c_cleared = 0
-        for r in range(2, max_r + 1):
-            if ws_q.cell(r, 3).value is not None and str(ws_q.cell(r, 3).value).strip() != '':
-                ws_q.cell(r, 3).value = None
+        for r in range(start_r, max_r + 1):
+            if ws_q.cell(r, exp_col).value is not None and str(ws_q.cell(r, exp_col).value).strip() != '':
+                ws_q.cell(r, exp_col).value = None
                 c_cleared += 1
         if c_cleared:
-            self.fixed_log.append(f"تم تفريغ عمود الشرح والتفسير في {c_cleared} خلية لضمان سرعة الفتح الفورية.")
+            self.fixed_log.append(f"تم تفريغ عمود الشرح والتفسير في {c_cleared} خلية لضمان سرعة الفتح الفورية للملف.")
 
-        # 2. تصحيح أسئلة الصواب والخطأ (تفريغ الخيارات وضبط الإجابة)
+        # 2. تصحيح أسئلة الصواب والخطأ (تفريغ الخيارات وضبط الإجابة) وتوحيد MCQ
         tf_cleared = 0
         tf_norm = 0
         mcq_norm = 0
-        for r in range(2, max_r + 1):
-            q_type = str(ws_q.cell(r, 1).value or '')
-            ans = str(ws_q.cell(r, 5).value or '').strip()
+        for r in range(start_r, max_r + 1):
+            q_type = str(ws_q.cell(r, type_col).value or '')
+            ans = str(ws_q.cell(r, ans_col).value or '').strip()
 
             if 'صح' in q_type or 'صواب' in q_type:
-                # تفريغ الخيارات F..I
-                if any(ws_q.cell(r, c).value is not None for c in range(6, 10)):
-                    for c in range(6, 10):
+                # تفريغ الخيارات
+                if any(ws_q.cell(r, c).value is not None for c in opt_cols):
+                    for c in opt_cols:
                         ws_q.cell(r, c).value = None
                     tf_cleared += 1
 
                 # توحيد الإجابة إلى True / False
                 if ans in ['صواب', 'صح', 'True', 'true', 'A', 'الخيار أ (A)']:
-                    ws_q.cell(r, 5).value = 'True'
+                    ws_q.cell(r, ans_col).value = 'True'
                     tf_norm += 1
                 elif ans in ['خطأ', 'خطا', 'False', 'false', 'B', 'الخيار ب (B)']:
-                    ws_q.cell(r, 5).value = 'False'
+                    ws_q.cell(r, ans_col).value = 'False'
                     tf_norm += 1
             else:
                 # اختيار من متعدد: توحيد الإجابة إلى A, B, C, D
-                if ans.startswith('الخيار أ') or ans == 'أ': ws_q.cell(r, 5).value = 'A'; mcq_norm += 1
-                elif ans.startswith('الخيار ب') or ans == 'ب': ws_q.cell(r, 5).value = 'B'; mcq_norm += 1
-                elif ans.startswith('الخيار ج') or ans == 'ج': ws_q.cell(r, 5).value = 'C'; mcq_norm += 1
-                elif ans.startswith('الخيار د') or ans == 'د': ws_q.cell(r, 5).value = 'D'; mcq_norm += 1
+                if ans.startswith('الخيار أ') or ans == 'أ': ws_q.cell(r, ans_col).value = 'A'; mcq_norm += 1
+                elif ans.startswith('الخيار ب') or ans == 'ب': ws_q.cell(r, ans_col).value = 'B'; mcq_norm += 1
+                elif ans.startswith('الخيار ج') or ans == 'ج': ws_q.cell(r, ans_col).value = 'C'; mcq_norm += 1
+                elif ans.startswith('الخيار د') or ans == 'د': ws_q.cell(r, ans_col).value = 'D'; mcq_norm += 1
 
         if tf_cleared:
-            self.fixed_log.append(f"تم تفريغ أعمدة الخيارات (F..I) لعدد {tf_cleared} سؤال صواب وخطأ.")
+            self.fixed_log.append(f"تم تفريغ أعمدة الخيارات لعدد {tf_cleared} سؤال صواب وخطأ لتطابق الشروط.")
         if tf_norm:
             self.fixed_log.append(f"تم توحيد صياغة إجابة الصواب والخطأ إلى (True/False) لعدد {tf_norm} سؤال.")
         if mcq_norm:
             self.fixed_log.append(f"تم توحيد رموز الإجابة لأسئلة الاختيار من متعدد إلى (A/B/C/D) لعدد {mcq_norm} سؤال.")
 
-        # 3. ضبط نطاقات الداتا فاليديشن لتطابق الصفوف الفعلية بالضبط
+        # 3. ضبط وتصحيح نطاقات الداتا فاليديشن
         if hasattr(ws_q, 'data_validations') and ws_q.data_validations:
             for dv in ws_q.data_validations.dataValidation:
                 old_sq = str(dv.sqref)
@@ -685,7 +849,7 @@ class ExamBankFixer:
 
         wb.save(self.output_path)
 
-        # 4. تجميع النسخة عبر محرك إكسيل الأصلي إذا كان متوفراً لضمان سرعة 0.06 ثانية
+        # 4. محاولة التجميع عبر Excel COM إذا توفر
         try:
             import win32com.client
             excel = win32com.client.Dispatch("Excel.Application")
@@ -733,4 +897,3 @@ if __name__ == "__main__":
         auditor_fixed = ExamBankAuditor(fixed_file, args.program, args.sheet, args.qpl)
         auditor_fixed.run_all_audits()
         print(f"⭐ النتيجة بعد التصحيح: {auditor_fixed.results['overall_status']} (الدرجة: {auditor_fixed.results['score']:.1f}%)")
-

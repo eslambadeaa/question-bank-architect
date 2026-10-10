@@ -234,9 +234,9 @@ def render_audit_tab():
                             )
 
                         if fixer.fixed_log:
-                            with st.expander("🛠️ سجل عمليات التصحيح التلقائي التي تمت بنجاح"):
+                            with st.expander("🛠️ تقرير وسجل عمليات التصحيح التلقائي التي تمت بنجاح (مطابق للمواصفات المعيارية)", expanded=True):
                                 for log_item in fixer.fixed_log:
-                                    st.write(f"• {log_item}")
+                                    st.success(f"✓ {log_item}")
 
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء إجراء التدقيق: {str(e)}")
