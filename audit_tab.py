@@ -221,7 +221,7 @@ def render_audit_tab():
                         fixer = ExamBankFixer(
                             bank_path=bank_tmp_path,
                             program_path=prog_tmp_path,
-                            program_sheet=prog_sheet,
+                            program_sheet=prog_sheet_name,
                             questions_per_lesson=expected_q
                         )
                         fixed_path = fixer.fix_all()
