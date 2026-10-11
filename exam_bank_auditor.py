@@ -1309,23 +1309,66 @@ class ExamBankFixer:
                 "ما المحدد الهندسي المعتمد لضبط وتعيين كفاءة ({topic})؟"
             ]
 
-            tf_tpl_idx = 0
+            # 4. تكميل النقص في أي من النوعين عن طريق اشتقاق وتغيير صيغ أسئلة من نفس الدرس وتوزيع الصعوبات
+            diff_levels = ["1 - سهل", "2 - متوسط", "3 - صعب", "4 - صعب جدا", "5 - تفوق"]
+            diff_cycle_idx = len(tf_rows) + len(mcq_rows)
+
+            # صيغ ذكية لإعادة صياغة أسئلة الصواب والخطأ من نفس الدرس
+            tf_paraphrase_prefixes = [
+                "صواب أم خطأ: ",
+                "من الخصائص المعتمدة أنه ",
+                "طبقاً للمواصفات الفنية فإن ",
+                "تؤكد التعليمات التشغيلية أن ",
+                "في الحالات القياسية يعتبر "
+            ]
+
+            # تكميل أسئلة الصواب والخطأ
+            source_tf_idx = 0
             while len(tf_rows) < target_tf:
-                tpl = tf_templates[tf_tpl_idx % len(tf_templates)]
-                tf_tpl_idx += 1
-                supp_text = tpl.format(topic=clean_les_topic)
-                # التأكد من عدم تكرار النص
+                supp_text = None
+                # أ. محاولة الاشتقاق من أسئلة الاختيار من متعدد الموجودة في نفس الدرس
+                if mcq_rows and source_tf_idx < len(mcq_rows) * 2:
+                    cand_mcq = mcq_rows[source_tf_idx % len(mcq_rows)]
+                    ans_code = str(cand_mcq[4] or 'A').strip()
+                    ans_col_idx = {'A': 5, 'B': 6, 'C': 7, 'D': 8}.get(ans_code, 5)
+                    ans_val = str(cand_mcq[ans_col_idx] or '').strip()
+                    ans_val_clean = re.sub(r'^[a-dA-D][\)\.\-]\s*', '', ans_val)
+                    q_body = str(cand_mcq[1]).strip().rstrip('؟?.')
+                    if ans_val_clean and len(ans_val_clean) > 1:
+                        prefix = tf_paraphrase_prefixes[source_tf_idx % len(tf_paraphrase_prefixes)]
+                        supp_text = f"{prefix}{q_body}: {ans_val_clean}."
+                    source_tf_idx += 1
+
+                # ب. محاولة إعادة صياغة سؤال صح/خطأ موجود في نفس الدرس
+                if (not supp_text or supp_text in existing_texts) and tf_rows:
+                    cand_tf = tf_rows[source_tf_idx % len(tf_rows)]
+                    q_tf_body = str(cand_tf[1]).strip().rstrip('؟?.')
+                    prefix = tf_paraphrase_prefixes[source_tf_idx % len(tf_paraphrase_prefixes)]
+                    supp_text = f"{prefix}{q_tf_body}."
+                    source_tf_idx += 1
+
+                # ج. الصياغة التخصصية الاحتياطية في حال تعذر الاشتقاق
+                if not supp_text or supp_text in existing_texts:
+                    tpl = tf_templates[source_tf_idx % len(tf_templates)]
+                    supp_text = tpl.format(topic=clean_les_topic)
+                    source_tf_idx += 1
+
+                # ضمان عدم تكرار النص نهائياً
                 trial = 1
+                base_text = supp_text
                 while supp_text in existing_texts:
                     trial += 1
-                    supp_text = f"{tpl.format(topic=clean_les_topic)} [معيار {trial}]"
+                    supp_text = f"{base_text.rstrip('.')} (معيار تخصصي {trial})."
                 existing_texts.add(supp_text)
 
+                assigned_diff = diff_levels[diff_cycle_idx % len(diff_levels)]
+                diff_cycle_idx += 1
+
                 supp_row = [
-                    "2- صح/خطأ",
+                    "2 - صح/خطأ",
                     supp_text,
                     None,
-                    "2 - متوسط" if len(tf_rows) % 2 == 0 else "3 - صعب",
+                    assigned_diff,
                     "True",
                     None, None, None, None,
                     les_name
@@ -1333,31 +1376,92 @@ class ExamBankFixer:
                 tf_rows.append(supp_row)
                 total_added += 1
 
-            mcq_tpl_idx = 0
+            # تكميل أسئلة الاختيار من متعدد
+            source_mcq_idx = 0
             while len(mcq_rows) < target_mcq:
-                tpl = mcq_templates[mcq_tpl_idx % len(mcq_templates)]
-                mcq_tpl_idx += 1
-                supp_q_text = tpl.format(topic=clean_les_topic)
+                supp_q_text = None
+                opt_a_val = None
+                opt_b_val = None
+                opt_c_val = None
+                opt_d_val = None
+
+                # أ. محاولة الاشتقاق من سؤال اختيار من متعدد موجود في نفس الدرس بصيغة استفهامية بديلة
+                if mcq_rows:
+                    cand_q = mcq_rows[source_mcq_idx % len(mcq_rows)]
+                    orig_q_body = str(cand_q[1]).strip().rstrip('؟?.')
+                    ans_code = str(cand_q[4] or 'A').strip()
+                    ans_col_idx = {'A': 5, 'B': 6, 'C': 7, 'D': 8}.get(ans_code, 5)
+                    ans_correct = str(cand_q[ans_col_idx] or '').strip()
+
+                    paraphrase_patterns = [
+                        f"ما هو المحدد الفني الصحيح بالنسبة لـ ({orig_q_body})؟",
+                        f"فيما يتعلق بـ ({orig_q_body})، أي من العبارات التالية تعتبر صحيحة؟",
+                        f"وفقاً للتعليمات الفنية والتكتيكية لـ ({orig_q_body})، حدد الخيار الدقيق:",
+                        f"ما النتيجة التشغيلية المباشرة المترتبة على ({orig_q_body})؟"
+                    ]
+                    supp_q_text = paraphrase_patterns[source_mcq_idx % len(paraphrase_patterns)]
+                    opt_a_val = ans_correct or f"مطابقة المحددات المعيارية لـ {clean_les_topic}"
+                    opt_b_val = get_fresh_distractor({opt_a_val})
+                    opt_c_val = get_fresh_distractor({opt_a_val, opt_b_val})
+                    opt_d_val = get_fresh_distractor({opt_a_val, opt_b_val, opt_c_val})
+                    source_mcq_idx += 1
+
+                # ب. محاولة الاشتقاق من سؤال صح/خطأ موجود في نفس الدرس
+                if (not supp_q_text or supp_q_text in existing_texts) and tf_rows:
+                    cand_tf = tf_rows[source_mcq_idx % len(tf_rows)]
+                    tf_body = str(cand_tf[1]).strip().rstrip('؟?.')
+                    supp_q_text = f"ما الحكم والبيان الفني الدقيق بشأن ({tf_body})؟"
+                    opt_a_val = f"بيان فني صحيح ومطابق لمواصفات {clean_les_topic}"
+                    opt_b_val = get_fresh_distractor({opt_a_val})
+                    opt_c_val = get_fresh_distractor({opt_a_val, opt_b_val})
+                    opt_d_val = get_fresh_distractor({opt_a_val, opt_b_val, opt_c_val})
+                    source_mcq_idx += 1
+
+                # ج. الصياغة التخصصية الاحتياطية
+                if not supp_q_text or supp_q_text in existing_texts:
+                    tpl = mcq_templates[source_mcq_idx % len(mcq_templates)]
+                    supp_q_text = tpl.format(topic=clean_les_topic)
+                    opt_a_val = f"مطابقة المواصفات الفنية المعتمدة لـ {clean_les_topic}"
+                    opt_b_val = get_fresh_distractor({opt_a_val})
+                    opt_c_val = get_fresh_distractor({opt_a_val, opt_b_val})
+                    opt_d_val = get_fresh_distractor({opt_a_val, opt_b_val, opt_c_val})
+                    source_mcq_idx += 1
+
                 trial = 1
+                base_q = supp_q_text
                 while supp_q_text in existing_texts:
                     trial += 1
-                    supp_q_text = f"{tpl.format(topic=clean_les_topic)} [بند {trial}]"
+                    supp_q_text = f"{base_q.rstrip('؟')} [بند {trial}]؟"
                 existing_texts.add(supp_q_text)
 
+                assigned_diff = diff_levels[diff_cycle_idx % len(diff_levels)]
+                diff_cycle_idx += 1
+
                 supp_row = [
-                    "1- اختيار من متعدد",
+                    "1 - اختيار من متعدد",
                     supp_q_text,
                     None,
-                    "2 - متوسط" if len(mcq_rows) % 2 == 0 else "1 - سهل",
+                    assigned_diff,
                     "A",
-                    f"مطابقة المواصفات الفنية المعتمدة لـ {clean_les_topic}",
-                    "عدم كفاية الإشارات التشغيلية للوحدة",
-                    "تجاوز معدلات التردد المسموح بها",
-                    "انخفاض جهد التشغيل الرئيسي عن الحد الأدنى",
+                    opt_a_val,
+                    opt_b_val,
+                    opt_c_val,
+                    opt_d_val,
                     les_name
                 ]
                 mcq_rows.append(supp_row)
                 total_added += 1
+
+            # ضبط تدرج الصعوبة لأسئلة الدرس لتطابق التوزيع المعتمد (30% سهل، 30% متوسط، 15% صعب، 15% صعب جدا، 10% تفوق)
+            total_les_q = len(mcq_rows) + len(tf_rows)
+            for idx_q, r_item in enumerate(mcq_rows + tf_rows):
+                if not r_item[3] or str(r_item[3]).strip() in ['', 'None']:
+                    ratio = idx_q / total_les_q
+                    if ratio < 0.30: r_item[3] = "1 - سهل"
+                    elif ratio < 0.60: r_item[3] = "2 - متوسط"
+                    elif ratio < 0.75: r_item[3] = "3 - صعب"
+                    elif ratio < 0.90: r_item[3] = "4 - صعب جدا"
+                    else: r_item[3] = "5 - تفوق"
 
             combined_lesson_q = mcq_rows + tf_rows
             for r_item in combined_lesson_q:
