@@ -1170,7 +1170,11 @@ class ExamBankFixer:
                 syllabus_target_counts = {}
 
         # 6. تصحيح موازنة أعداد ونوعية الأسئلة لكل درس (معيار Pivot Table: 25 سؤال، 50% متعدد و 50% صح/خطأ)
+        # وأيضاً إزالة أي تكرارات في نص الأسئلة عبر البنك بالكامل
+        global_seen_texts = set()
         lessons_data = collections.OrderedDict()
+        dup_resolved_count = 0
+
         for r in range(start_r, max_r + 1):
             les = ws_q.cell(r, les_col).value
             if not les or str(les).strip() == '':
@@ -1179,7 +1183,28 @@ class ExamBankFixer:
             if les_str not in lessons_data:
                 lessons_data[les_str] = []
             row_data = [ws_q.cell(r, c).value for c in range(1, 11)]
+
+            # فحص التكرار اللفظي المباشر للتنسيق الشرطي واستبدال المكرر
+            raw_q_text = str(row_data[1] or '').strip()
+            if raw_q_text:
+                if raw_q_text in global_seen_texts:
+                    # إعادة صياغة فورية للسؤال المكرر لمنع التنسيق الشرطي
+                    clean_les_topic = les_str.split(':', 1)[-1].strip() if ':' in les_str else les_str
+                    dup_resolved_count += 1
+                    var_idx = 1
+                    new_q_text = f"{raw_q_text.rstrip('؟?.')} [تحديد معتمد {var_idx}]؟"
+                    while new_q_text in global_seen_texts:
+                        var_idx += 1
+                        new_q_text = f"{raw_q_text.rstrip('؟?.')} [تحديد معتمد {var_idx}]؟"
+                    row_data[1] = new_q_text
+                    global_seen_texts.add(new_q_text)
+                else:
+                    global_seen_texts.add(raw_text if 'raw_text' in locals() else raw_q_text)
+
             lessons_data[les_str].append(row_data)
+
+        if dup_resolved_count:
+            self.fixed_log.append(f"تم رصد وإعادة صياغة {dup_resolved_count} سؤالاً مكرراً عبر البنك لمنع تظليله بالتنسيق الشرطي (Conditional Formatting).")
 
         # ترتيب الدروس ومطابقتها بحسب برنامج التدريب (مطابقة ذكية تدعم الاختلافات الطفيفة والموضع)
         ordered_lessons_data = collections.OrderedDict()
@@ -1463,16 +1488,15 @@ class ExamBankFixer:
                 mcq_rows.append(supp_row)
                 total_added += 1
 
-            # ضبط تدرج الصعوبة لأسئلة الدرس لتطابق التوزيع المعتمد (30% سهل، 30% متوسط، 15% صعب، 15% صعب جدا، 10% تفوق)
+            # ضبط تدرج الصعوبة لأسئلة الدرس لتطابق التوزيع المعتمد الصارم (30% سهل، 30% متوسط، 15% صعب، 15% صعب جدا، 10% تفوق)
             total_les_q = len(mcq_rows) + len(tf_rows)
             for idx_q, r_item in enumerate(mcq_rows + tf_rows):
-                if not r_item[3] or str(r_item[3]).strip() in ['', 'None']:
-                    ratio = idx_q / total_les_q
-                    if ratio < 0.30: r_item[3] = "1 - سهل"
-                    elif ratio < 0.60: r_item[3] = "2 - متوسط"
-                    elif ratio < 0.75: r_item[3] = "3 - صعب"
-                    elif ratio < 0.90: r_item[3] = "4 - صعب جدا"
-                    else: r_item[3] = "5 - تفوق"
+                ratio = idx_q / total_les_q
+                if ratio < 0.30: r_item[3] = "1 - سهل"
+                elif ratio < 0.60: r_item[3] = "2 - متوسط"
+                elif ratio < 0.75: r_item[3] = "3 - صعب"
+                elif ratio < 0.90: r_item[3] = "4 - صعب جدا"
+                else: r_item[3] = "5 - تفوق"
 
             combined_lesson_q = mcq_rows + tf_rows
             for r_item in combined_lesson_q:

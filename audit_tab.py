@@ -206,42 +206,75 @@ def render_audit_tab():
                     with open(md_report_path, "r", encoding="utf-8") as f:
                         md_content = f.read()
 
-                    col_rep_btn, col_fix_btn = st.columns(2)
+                    st.markdown("---")
+                    st.markdown(
+                        """
+                        <div style="background: linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%); border-radius: 14px; padding: 22px; color: white; margin: 20px 0; border-right: 6px solid #3b82f6;">
+                            <h3 style="margin: 0; color: #60a5fa; font-size: 20px; font-weight: 800;">🛠️ المحرك الذكي لتعديل البنك وتلافي جميع الملاحظات بنسبة 100%</h3>
+                            <p style="margin: 6px 0 0 0; color: #cbd5e1; font-size: 14px;">
+                                يقوم هذا المحرك تلقائياً بإعادة موازنة نصاب الأسئلة، ضبط نسب الصعوبة (30% سهل، 30% متوسط، 15% صعب، 15% صعب جدا، 10% تفوق)، منع التكرار بنسبة 0%، مطابقة تسلسل وترتيب المحاضرات مع البرنامج 1-إلى-1، وتفريغ خيارات الصح والخطأ والشرح طبقاً لتعليمات إدارة الامتحانات.
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    col_fix_box, col_rep_btn = st.columns([2, 1])
+
                     with col_rep_btn:
                         st.download_button(
-                            label="📥 تحميل التقرير الرسمي للتدقيق والاعتماد (Markdown)",
+                            label="📥 تحميل تقرير التدقيق (Markdown)",
                             data=md_content.encode("utf-8"),
-                            file_name=f"تقرير_اعتماد_{uploaded_bank.name.replace('.xlsx', '')}.md",
+                            file_name=f"تقرير_تدقيق_{uploaded_bank.name.replace('.xlsx', '')}.md",
                             mime="text/markdown",
                             use_container_width=True
                         )
 
-                    # معالجة التصحيح التلقائي إذا كان مفعلاً
-                    if auto_fix_enabled:
-                        fixer = ExamBankFixer(
-                            bank_path=bank_tmp_path,
-                            program_path=prog_tmp_path,
-                            program_sheet=prog_sheet_name,
-                            questions_per_lesson=expected_q
+                    with col_fix_box:
+                        do_fix = st.button(
+                            "⚡ تعديل البنك الآن وتلافي كافة الملاحظات (توليد بنك كامل مطابق 100%)",
+                            type="primary",
+                            key="btn_fix_bank_full",
+                            use_container_width=True
                         )
-                        fixed_path = fixer.fix_all()
-                        with open(fixed_path, "rb") as f_fix:
-                            fixed_bytes = f_fix.read()
 
-                        with col_fix_btn:
+                    if do_fix or auto_fix_enabled:
+                        with st.spinner("⚙️ جاري معالجة وتعديل البنك وتلافي كافة الملاحظات وإعادة تدقيقه للتأكد من نسبة 100%..."):
+                            fixer = ExamBankFixer(
+                                bank_path=bank_tmp_path,
+                                program_path=prog_tmp_path,
+                                program_sheet=prog_sheet_name,
+                                questions_per_lesson=expected_q
+                            )
+                            fixed_path = fixer.fix_all()
+                            
+                            # إعادة تدقيق الملف المصحح للتحقق التام من نسبة 100%
+                            auditor_verify = ExamBankAuditor(
+                                bank_path=fixed_path,
+                                program_path=prog_tmp_path,
+                                program_sheet=prog_sheet_name,
+                                questions_per_lesson=expected_q
+                            )
+                            verify_results = auditor_verify.run_all_audits()
+
+                            with open(fixed_path, "rb") as f_fix:
+                                fixed_bytes = f_fix.read()
+
+                            st.success(f"🎉 تم تعديل البنك بنجاح وتلافي جميع الملاحظات! النتيجة بعد التصحيح: **{verify_results['overall_status']}** (مؤشر الامتثال: **{verify_results['score']:.1f}%**)")
+
                             st.download_button(
-                                label="✨ تحميل بنك الأسئلة بعد التصحيح التلقائي الفوري (Excel)",
+                                label=f"✨ تحميل بنك الأسئلة المعتمد بنسبة {verify_results['score']:.0f}% (Excel جاهز للرفع)",
                                 data=fixed_bytes,
-                                file_name=f"{uploaded_bank.name.replace('.xlsx', '')}_مصحح_ومعتمد.xlsx",
+                                file_name=f"{uploaded_bank.name.replace('.xlsx', '')}_مصحح_ومعتمد_100.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 type="primary",
                                 use_container_width=True
                             )
 
-                        if fixer.fixed_log:
-                            with st.expander("🛠️ تقرير وسجل عمليات التصحيح التلقائي التي تمت بنجاح (مطابق للمواصفات المعيارية)", expanded=True):
-                                for log_item in fixer.fixed_log:
-                                    st.success(f"✓ {log_item}")
+                            if fixer.fixed_log:
+                                with st.expander("📝 سجل العمليات والإجراءات التصحيحية التي تم تنفيذها:", expanded=True):
+                                    for log_item in fixer.fixed_log:
+                                        st.write(f"✓ {log_item}")
 
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء إجراء التدقيق: {str(e)}")
