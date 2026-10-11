@@ -77,26 +77,49 @@ def normalize_arabic_text(text: str) -> str:
     
     return t.strip()
 
-def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lessons=[]) -> Tuple[List[str], str]:
+def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lessons=[]) -> Tuple[List[str], str, Dict[str, int]]:
     """
     استكشاف واستخراج تسلسل دروس برنامج التدريب بذكاء شامل:
-    - يتعرف تلقائياً على القسم (إعدادي / متوسط / نهائي) من اسم البنك أو محتواه.
+    - يطابق محتوى دروس البنك مع شيتات البرنامج للتعرف على الشيت الصحيح تلقائياً.
+    - يتعرف تلقائياً على القسم (إعدادي / متوسط / نهائي) دون اللبس بين 'وضع نهائي' و'القسم النهائي'.
     - يدعم البرامج المقسمة على شيتات منفصلة أو المجمعة في شيت واحد مقسم أفقياً.
-    - يستكشف عمود الموضوع وعمود المرحلة ديناميكياً ويتجاهل صفوف الإجماليات والترويسات.
+    - يستكشف عمود الموضوع وعمود المرحلة وعمود عدد الأسئلة إن وجد.
     """
-    combined_ctx = (bank_name or '') + ' ' + ' '.join(bank_lessons[:15])
+    norm_bank_lessons = [normalize_arabic_text(bl) for bl in bank_lessons if bl]
+    
+    # 1. مطابقة المحتوى لاختيار أفضل شيت تدريبي
+    best_ws = None
+    best_sheet_match = 0
+    for s_name in prog_wb.sheetnames:
+        s_ws = prog_wb[s_name]
+        matches = 0
+        for r in range(1, min(100, s_ws.max_row + 1)):
+            for c in range(1, min(10, s_ws.max_column + 1)):
+                v = normalize_arabic_text(str(s_ws.cell(r, c).value or ''))
+                if v and len(v) >= 3 and any(v == nb or (len(v) > 8 and v in nb) or (len(nb) > 8 and nb in v) for nb in norm_bank_lessons):
+                    matches += 1
+        if matches > best_sheet_match:
+            best_sheet_match = matches
+            best_ws = s_ws
+
+    # 2. تحديد المرحلة المستهدفة بدقة
+    combined_ctx = bank_name or ''
     ctx_norm = normalize_arabic_text(combined_ctx)
     target_stage = None
     if any(k in ctx_norm for k in ['اعدادي', 'القسم الاعدادي', 'الاعدادي']):
         target_stage = 'اعدادي'
     elif any(k in ctx_norm for k in ['متوسط', 'القسم المتوسط', 'المتوسط']):
         target_stage = 'متوسط'
-    elif any(k in ctx_norm for k in ['نهائي', 'القسم النهائي', 'النهائي']):
-        target_stage = 'نهائي'
+    elif any(k in ctx_norm for k in ['القسم النهائي', 'نهائي']):
+        # تجنب اعتبار 'وضع نهائي' مرحلة دراسية إلا إذا كانت مصحوبة بكلمة القسم النهائي
+        if 'وضع نهائي' not in ctx_norm or 'القسم النهائي' in ctx_norm or 'نهائي' in ctx_norm.replace('وضع نهائي', ''):
+            target_stage = 'نهائي'
 
     ws = None
     if prog_sheet and prog_sheet in prog_wb.sheetnames:
         ws = prog_wb[prog_sheet]
+    elif best_ws and best_sheet_match >= 3:
+        ws = best_ws
     elif target_stage:
         for s in prog_wb.sheetnames:
             if target_stage in normalize_arabic_text(s):
@@ -116,34 +139,33 @@ def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lesson
     sheet_title = ws.title
     topic_col = 2
     stage_col = None
+    q_col = None
     start_r = 1
 
-    header_found = False
     for r in range(1, min(15, ws.max_row) + 1):
         for c in range(1, min(15, ws.max_column) + 1):
             v = normalize_arabic_text(str(ws.cell(r, c).value or ''))
-            if any(w in v for w in ['اسم الموضوع', 'الموضوع', 'الدرس', 'اسم الدرس', 'topic']):
-                topic_col = c
-                start_r = r + 1
-                header_found = True
-        if header_found:
-            for c in range(1, min(15, ws.max_column) + 1):
-                v = normalize_arabic_text(str(ws.cell(r, c).value or ''))
+            if not topic_col or topic_col == 2:
+                if any(w in v for w in ['اسم الموضوع', 'الموضوع', 'الدرس', 'اسم الدرس', 'topic']):
+                    topic_col = c
+                    start_r = r + 1
+            if not stage_col:
                 if any(w in v for w in ['السنه الدراسيه', 'المرحله', 'القسم', 'الفصل الدراسي', 'stage']):
                     stage_col = c
-            break
+            if not q_col:
+                if any(w in v for w in ['عدد الاسئلة', 'عدد الاسئله', 'الاسئلة', 'الاسئله']):
+                    q_col = c
 
-    # إذا لم يتم تحديد target_stage من اسم البنك، نقوم بمطابقة دروس البنك مع أعمدة المراحل في شيت البرنامج
-    if not target_stage and bank_lessons and stage_col:
+    # إذا كان الشيت مجمعاً وبه عمود مرحلة، نستكشف المرحلة بمطابقة دروس البنك
+    if not target_stage and norm_bank_lessons and stage_col:
         stage_votes = {'اعدادي': 0, 'متوسط': 0, 'نهائي': 0}
-        norm_bank_lessons = [normalize_arabic_text(bl) for bl in bank_lessons if bl]
         for r in range(start_r, ws.max_row + 1):
             top_val = ws.cell(r, topic_col).value
             stg_val = ws.cell(r, stage_col).value
             if top_val and stg_val:
                 t_norm = normalize_arabic_text(str(top_val))
                 s_norm = normalize_arabic_text(str(stg_val))
-                if t_norm in norm_bank_lessons:
+                if any(t_norm == nb or (len(t_norm) > 8 and t_norm in nb) or (len(nb) > 8 and nb in t_norm) for nb in norm_bank_lessons):
                     for k in stage_votes:
                         if k in s_norm:
                             stage_votes[k] += 1
@@ -152,9 +174,12 @@ def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lesson
             target_stage = best_stage
 
     extracted = []
+    lesson_target_counts = {}
     current_sec = None
     last_val = None
     is_sheet_dedicated = target_stage and (target_stage in normalize_arabic_text(sheet_title))
+    if not target_stage and not stage_col:
+        is_sheet_dedicated = True
 
     for r in range(start_r, ws.max_row + 1):
         row_str = ' '.join(str(ws.cell(r, c).value or '') for c in range(1, min(8, ws.max_column) + 1))
@@ -162,7 +187,7 @@ def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lesson
         if any(w in row_norm for w in ['اجمالي', 'اجمالي الساعات', 'امتحان']):
             continue
 
-        if not is_sheet_dedicated:
+        if not is_sheet_dedicated and stage_col:
             # التحقق من عناوين الأقسام الرئيسية
             if any(w in row_norm for w in ['موضوعات', 'برنامج تدريب']):
                 if 'اعدادي' in row_norm: current_sec = 'اعدادي'
@@ -170,13 +195,11 @@ def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lesson
                 elif 'نهائي' in row_norm: current_sec = 'نهائي'
                 continue
 
-            if stage_col:
-                st_v = normalize_arabic_text(str(ws.cell(r, stage_col).value or ''))
-                if 'اعدادي' in st_v: current_sec = 'اعدادي'
-                elif 'متوسط' in st_v: current_sec = 'متوسط'
-                elif 'نهائي' in st_v: current_sec = 'نهائي'
+            st_v = normalize_arabic_text(str(ws.cell(r, stage_col).value or ''))
+            if 'اعدادي' in st_v: current_sec = 'اعدادي'
+            elif 'متوسط' in st_v: current_sec = 'متوسط'
+            elif 'نهائي' in st_v: current_sec = 'نهائي'
 
-            # إذا كانت المرحلة الحالية غير محددة بعد أو لا تطابق المرحلة المستهدفة
             if target_stage:
                 if current_sec is not None and current_sec != target_stage:
                     continue
@@ -191,11 +214,15 @@ def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lesson
             if n_clean in ['نظري', 'مخططات و دوائر كهربائية', 'مخططات ودوائر كهربائية'] or n_clean.isdigit():
                 continue
             if n_clean != last_val:
-                extracted.append(n_clean)
+                if n_clean not in extracted:
+                    extracted.append(n_clean)
                 last_val = n_clean
-                last_val = n_clean
+            if q_col:
+                qv = ws.cell(r, q_col).value
+                if qv and isinstance(qv, (int, float)):
+                    lesson_target_counts[n_clean] = lesson_target_counts.get(n_clean, 0) + int(qv)
 
-    return extracted, sheet_title
+    return extracted, sheet_title, lesson_target_counts
 
 def detect_bank_structure(ws) -> Dict[str, Any]:
     """
@@ -375,24 +402,24 @@ class ExamBankAuditor:
         # 1. اختبار التكرار والتمييز الشرطي المزدوج (Exact + Normalized)
         self._audit_duplicates()
         
-        # 2. اختبار بيفوت تيبل وتوزيع الأسئلة على الدروس
-        self._audit_lesson_counts()
-        
-        # 3. فحص العبارات المحظورة في الخيارات
-        self._audit_forbidden_phrases()
-        
-        # 4. فحص نسب الصعوبة وتوازن الأنواع
-        self._audit_distribution()
-        
-        # 5. فحص ضوابط أسئلة الصواب والخطأ
-        self._audit_tf_rules()
-        
-        # 6. فحص ضوابط واكتمال أسئلة الاختيار من متعدد
-        self._audit_mcq_rules()
-        
-        # 7. مطابقة تسلسل الدروس مع برنامج التدريب
+        # 2. مطابقة تسلسل الدروس مع برنامج التدريب واستخراج المستهدفات
         if self.ws_program:
             self._audit_syllabus_match()
+            
+        # 3. اختبار بيفوت تيبل وتوزيع الأسئلة على الدروس
+        self._audit_lesson_counts()
+        
+        # 4. فحص العبارات المحظورة في الخيارات
+        self._audit_forbidden_phrases()
+        
+        # 5. فحص نسب الصعوبة وتوازن الأنواع
+        self._audit_distribution()
+        
+        # 6. فحص ضوابط أسئلة الصواب والخطأ
+        self._audit_tf_rules()
+        
+        # 7. فحص ضوابط واكتمال أسئلة الاختيار من متعدد
+        self._audit_mcq_rules()
             
         # 8. فحص السرعة والداتا فاليديشن وعمود الشرح
         self._audit_speed_and_validation()
@@ -466,22 +493,32 @@ class ExamBankAuditor:
         pivot_rows = []
         shortage_lessons = []
         excess_lessons = []
+        target_counts = self.results.get("syllabus_match", {}).get("target_counts", {})
         
         for idx, (les, count) in enumerate(counts.items(), start=1):
-            diff = count - self.expected_q_per_lesson
+            exp = target_counts.get(les, self.expected_q_per_lesson)
+            # إذا لم يوجد نص مطابق حرفياً، نبحث بعد توحيد النص
+            if les not in target_counts and target_counts:
+                l_norm = normalize_arabic_text(les)
+                for tk, tv in target_counts.items():
+                    if normalize_arabic_text(tk) == l_norm:
+                        exp = tv
+                        break
+
+            diff = count - exp
             status = "OK" if diff == 0 else ("SHORTAGE" if diff < 0 else "EXCESS")
             pivot_rows.append({
                 "index": idx,
                 "lesson": les,
                 "count": count,
-                "expected": self.expected_q_per_lesson,
+                "expected": exp,
                 "diff": diff,
                 "status": status
             })
             if diff < 0:
-                shortage_lessons.append((les, count, abs(diff)))
+                shortage_lessons.append((les, count, abs(diff), exp))
             elif diff > 0:
-                excess_lessons.append((les, count, diff))
+                excess_lessons.append((les, count, diff, exp))
                 
         self.results["lesson_counts"]["pivot"] = pivot_rows
         self.results["lesson_counts"]["total_lessons"] = len(counts)
@@ -490,7 +527,7 @@ class ExamBankAuditor:
             self.results["lesson_counts"]["status"] = "FAIL"
             if shortage_lessons:
                 self.results["recommendations"].append(
-                    f"⚠️ يوجد نقص في عدد الأسئلة في {len(shortage_lessons)} درساً عن المعدل المقرر ({self.expected_q_per_lesson} سؤال)."
+                    f"⚠️ يوجد نقص في عدد الأسئلة في {len(shortage_lessons)} درساً عن المعدل المقرر."
                 )
             if excess_lessons:
                 self.results["recommendations"].append(
@@ -714,13 +751,15 @@ class ExamBankAuditor:
                     bank_lessons.append(les_clean)
                     last_bank_les = les_clean
 
-        prog_lessons, used_sheet = extract_syllabus_lessons(
+        prog_lessons, used_sheet, target_counts = extract_syllabus_lessons(
             prog_wb=self.prog_wb,
             prog_sheet=self.program_sheet,
             bank_name=self.results["file_info"].get("bank_name", ""),
             bank_lessons=bank_lessons
         )
         self.results["file_info"]["program_sheet"] = used_sheet
+        if target_counts:
+            self.results["syllabus_match"]["target_counts"] = target_counts
                     
         mismatches = []
         max_len = max(len(prog_lessons), len(bank_lessons))
@@ -1098,6 +1137,7 @@ class ExamBankFixer:
 
         # 5. استخراج تسلسل الدروس المعتمد من برنامج التدريب ومطابقة ترتيب البنك معه
         syllabus_order = []
+        syllabus_target_counts = {}
         if self.program_path and os.path.exists(self.program_path):
             try:
                 p_wb = openpyxl.load_workbook(self.program_path, data_only=True)
@@ -1108,7 +1148,7 @@ class ExamBankFixer:
                     if bv and str(bv).strip():
                         b_lessons_probe.append(str(bv).strip())
 
-                syllabus_order, _ = extract_syllabus_lessons(
+                syllabus_order, _, syllabus_target_counts = extract_syllabus_lessons(
                     prog_wb=p_wb,
                     prog_sheet=self.program_sheet,
                     bank_name=os.path.basename(self.bank_path),
@@ -1116,6 +1156,7 @@ class ExamBankFixer:
                 )
             except Exception:
                 syllabus_order = []
+                syllabus_target_counts = {}
 
         # 6. تصحيح موازنة أعداد ونوعية الأسئلة لكل درس (معيار Pivot Table: 25 سؤال، 50% متعدد و 50% صح/خطأ)
         lessons_data = collections.OrderedDict()
@@ -1129,26 +1170,61 @@ class ExamBankFixer:
             row_data = [ws_q.cell(r, c).value for c in range(1, 11)]
             lessons_data[les_str].append(row_data)
 
-        # ترتيب الدروس بحسب برنامج التدريب إذا توفر
+        # ترتيب الدروس ومطابقتها بحسب برنامج التدريب (مطابقة ذكية تدعم الاختلافات الطفيفة والموضع)
         ordered_lessons_data = collections.OrderedDict()
         if syllabus_order:
+            bank_keys = list(lessons_data.keys())
+            matched_map = {}
+            used_bank_keys = set()
+
+            # أ. مطابقة تامة بعد توحيد النصوص
             for s_name in syllabus_order:
                 s_norm = normalize_arabic_text(s_name)
-                # مطابقة مع دروس البنك
-                matched_bank_key = None
-                for b_key in lessons_data.keys():
-                    if normalize_arabic_text(b_key) == s_norm:
-                        matched_bank_key = b_key
+                for b_key in bank_keys:
+                    if b_key not in used_bank_keys and normalize_arabic_text(b_key) == s_norm:
+                        matched_map[s_name] = b_key
+                        used_bank_keys.add(b_key)
                         break
-                if matched_bank_key:
-                    # تحديث اسم الدرس في كل صف ليتطابق نصياً 1-to-1 مع البرنامج
-                    for r_item in lessons_data[matched_bank_key]:
+
+            # ب. مطابقة باشتراك الكلمات أو الاحتواء الدلالي
+            for s_name in syllabus_order:
+                if s_name in matched_map:
+                    continue
+                s_words = set(normalize_arabic_text(s_name).split())
+                best_b = None
+                best_overlap = 0
+                for b_key in bank_keys:
+                    if b_key in used_bank_keys:
+                        continue
+                    b_words = set(normalize_arabic_text(b_key).split())
+                    overlap = len(s_words & b_words)
+                    if overlap > best_overlap and overlap >= 2:
+                        best_overlap = overlap
+                        best_b = b_key
+                if best_b:
+                    matched_map[s_name] = best_b
+                    used_bank_keys.add(best_b)
+
+            # ج. مطابقة بالترتيب الموضعي إذا كان عدد الدروس متطابقاً
+            if len(syllabus_order) == len(bank_keys):
+                for idx, s_name in enumerate(syllabus_order):
+                    if s_name not in matched_map:
+                        b_cand = bank_keys[idx]
+                        if b_cand not in used_bank_keys:
+                            matched_map[s_name] = b_cand
+                            used_bank_keys.add(b_cand)
+
+            # بناء القائمة المرتبة مع تحديث اسم الدرس ليتطابق نصياً 1-to-1
+            for s_name in syllabus_order:
+                if s_name in matched_map:
+                    b_key = matched_map[s_name]
+                    for r_item in lessons_data[b_key]:
                         r_item[9] = s_name
-                    ordered_lessons_data[s_name] = lessons_data[matched_bank_key]
+                    ordered_lessons_data[s_name] = lessons_data[b_key]
 
             # إضافة أي دروس متبقية
             for b_key, b_rows in lessons_data.items():
-                if b_key not in ordered_lessons_data and not any(normalize_arabic_text(b_key) == normalize_arabic_text(k) for k in ordered_lessons_data):
+                if b_key not in used_bank_keys:
                     ordered_lessons_data[b_key] = b_rows
         else:
             ordered_lessons_data = lessons_data
@@ -1168,9 +1244,20 @@ class ExamBankFixer:
             mcq_rows = [r for r in q_list if 'متعدد' in str(r[0] or '') or 'اختيار' in str(r[0] or '')]
             tf_rows = [r for r in q_list if 'صح' in str(r[0] or '') or 'صواب' in str(r[0] or '')]
 
-            # المستهدف لكل درس بالتناوب الدقيق: درس 13 MCQ و 12 TF والدرس التالي 12 MCQ و 13 TF لتحقيق 550 و 550 (50.0%) بالضبط
-            target_mcq = 13 if (lesson_index_counter % 2 == 0) else 12
-            target_tf = self.expected_q_per_lesson - target_mcq
+            # تحديد العدد المستهدف لهذا الدرس:
+            # إذا كان برنامج التدريب يحدد صراحة عدد أسئلة في عمود مخصص، نلتزم به
+            # وإلا فالمعيار الافتراضي (25 سؤال لكل درس)
+            target_q_for_this_lesson = syllabus_target_counts.get(les_name, self.expected_q_per_lesson)
+            # إذا كان بنك الأسئلة يحتوي بالفعل على 50 أو 100 سؤال متناسقة مع البرنامج، نحافظ عليها
+            if target_q_for_this_lesson == self.expected_q_per_lesson and current_count in [50, 75, 100, 150] and not syllabus_target_counts:
+                # إذا لم يكن هناك عمود أعداد صريح والدرس بالفعل مضاعف متزن
+                target_q_for_this_lesson = current_count
+
+            # المستهدف لكل نوع: 50% MCQ و 50% TF
+            target_mcq = target_q_for_this_lesson // 2
+            if target_q_for_this_lesson % 2 != 0:
+                target_mcq += 1 if (lesson_index_counter % 2 == 0) else 0
+            target_tf = target_q_for_this_lesson - target_mcq
             lesson_index_counter += 1
 
             # تحويل أي فائض في الاختيار من متعدد إلى صح وخطأ للوصول إلى target_mcq و target_tf
