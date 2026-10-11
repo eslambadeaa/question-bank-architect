@@ -173,22 +173,33 @@ def extract_syllabus_lessons(prog_wb, prog_sheet=None, bank_name='', bank_lesson
         if stage_votes[best_stage] > 0:
             target_stage = best_stage
 
+    # فحص ما إذا كان الشيت مقسماً فعلياً إلى مراحل متعددة (مثل إعدادي، متوسط، نهائي)
+    sheet_stages = set()
+    if stage_col:
+        for r in range(start_r, ws.max_row + 1):
+            sv = ws.cell(r, stage_col).value
+            if sv and str(sv).strip():
+                sheet_stages.add(normalize_arabic_text(str(sv).strip()))
+    
+    # إذا كان الشيت يحتوي على مرحلة واحدة فقط (مثل 'الرابعة' فقط أو 'المتوسط' فقط)، نعتبره مخصصاً ولا نقوم بالاستبعاد
+    is_multi_stage_sheet = len(sheet_stages) > 1
+
     extracted = []
     lesson_target_counts = {}
     current_sec = None
     last_val = None
-    is_sheet_dedicated = target_stage and (target_stage in normalize_arabic_text(sheet_title))
+    is_sheet_dedicated = not is_multi_stage_sheet or (target_stage and (target_stage in normalize_arabic_text(sheet_title)))
     if not target_stage and not stage_col:
         is_sheet_dedicated = True
 
     for r in range(start_r, ws.max_row + 1):
         row_str = ' '.join(str(ws.cell(r, c).value or '') for c in range(1, min(8, ws.max_column) + 1))
         row_norm = normalize_arabic_text(row_str)
-        if any(w in row_norm for w in ['اجمالي', 'اجمالي الساعات', 'امتحان']):
+        if any(w in row_norm for w in ['اجمالي', 'اجمالي الساعات', 'امتحان', 'ملحوظه']):
             continue
 
         if not is_sheet_dedicated and stage_col:
-            # التحقق من عناوين الأقسام الرئيسية
+            # التحقق من عناوين الأقسام الرئيسية في الشيتات متعددة المراحل
             if any(w in row_norm for w in ['موضوعات', 'برنامج تدريب']):
                 if 'اعدادي' in row_norm: current_sec = 'اعدادي'
                 elif 'متوسط' in row_norm: current_sec = 'متوسط'
