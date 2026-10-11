@@ -89,29 +89,34 @@ def generate_shilka_lesson_questions(lesson_title, lesson_idx, section_name):
     questions = []
     
     # جداول الصعوبة الدقيقة الموزعة عبر 4 دروس لتحقيق نسب 30 - 30 - 15 - 15 - 10 بالتمام
+    # مع ضمان وجود كافة مستويات الصعوبة الخمسة داخل الاختيار من متعدد وداخل الصح والخطأ في كل درس
     easy_k = "1 - سهل"
     med_k = "2 - متوسط"
     hard_k = "3 - صعب"
     vhard_k = "4 - صعب جدا"
     exc_k = "5 - تفوق"
 
-    difficulty_schedules = [
-        # دورة 0: 8 سهل، 7 متوسط، 4 صعب، 4 صعب جدا، 2 تفوق
-        [easy_k]*8 + [med_k]*7 + [hard_k]*4 + [vhard_k]*4 + [exc_k]*2,
-        # دورة 1: 7 سهل، 8 متوسط، 4 صعب، 3 صعب جدا، 3 تفوق
-        [easy_k]*7 + [med_k]*8 + [hard_k]*4 + [vhard_k]*3 + [exc_k]*3,
-        # دورة 2: 8 سهل، 7 متوسط، 3 صعب، 4 صعب جدا، 3 تفوق
-        [easy_k]*8 + [med_k]*7 + [hard_k]*3 + [vhard_k]*4 + [exc_k]*3,
-        # دورة 3: 7 سهل، 8 متوسط، 4 صعب، 4 صعب جدا، 2 تفوق
-        [easy_k]*7 + [med_k]*8 + [hard_k]*4 + [vhard_k]*4 + [exc_k]*2
+    difficulty_templates = [
+        # دورة 0: 13 MCQ (4 سهل، 4 متوسط، 2 صعب، 2 صعب جدا، 1 تفوق) + 12 TF (4 سهل، 3 متوسط، 2 صعب، 2 صعب جدا، 1 تفوق)
+        ([easy_k]*4 + [med_k]*4 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*1,
+         [easy_k]*4 + [med_k]*3 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*1),
+        # دورة 1: 12 MCQ (3 سهل، 4 متوسط، 2 صعب، 2 صعب جدا، 1 تفوق) + 13 TF (4 سهل، 4 متوسط، 2 صعب، 1 صعب جدا، 2 تفوق)
+        ([easy_k]*3 + [med_k]*4 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*1,
+         [easy_k]*4 + [med_k]*4 + [hard_k]*2 + [vhard_k]*1 + [exc_k]*2),
+        # دورة 2: 13 MCQ (4 سهل، 3 متوسط، 2 صعب، 2 صعب جدا، 2 تفوق) + 12 TF (4 سهل، 4 متوسط، 1 صعب، 2 صعب جدا، 1 تفوق)
+        ([easy_k]*4 + [med_k]*3 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*2,
+         [easy_k]*4 + [med_k]*4 + [hard_k]*1 + [vhard_k]*2 + [exc_k]*1),
+        # دورة 3: 12 MCQ (4 سهل، 4 متوسط، 2 صعب، 1 صعب جدا، 1 تفوق) + 13 TF (3 سهل، 4 متوسط، 2 صعب، 3 صعب جدا، 1 تفوق)
+        ([easy_k]*4 + [med_k]*4 + [hard_k]*2 + [vhard_k]*1 + [exc_k]*1,
+         [easy_k]*3 + [med_k]*4 + [hard_k]*2 + [vhard_k]*3 + [exc_k]*1)
     ]
     
-    diff_schedule = difficulty_schedules[(lesson_idx - 1) % 4]
+    mcq_diff_list, tf_diff_list = difficulty_templates[(lesson_idx - 1) % 4]
 
     clean_topic = re.sub(r'^(القسم الأول|القسم الثاني|الباب|موضوعات|درس)\s*[:\-]\s*', '', lesson_title).strip()
 
-    num_mcq = 13 if (lesson_idx % 2 == 1) else 12
-    num_tf = 25 - num_mcq
+    num_mcq = len(mcq_diff_list)
+    num_tf = len(tf_diff_list)
 
     # نماذج الاختيار من متعدد بصياغة عسكرية امتحانية مباشرة
     mcq_templates = [
@@ -214,7 +219,7 @@ def generate_shilka_lesson_questions(lesson_title, lesson_idx, section_name):
         options[0], options[target_pos] = options[target_pos], options[0]
         correct_letter = ans_keys[target_pos]
 
-        assigned_diff = diff_schedule[q_idx]
+        assigned_diff = mcq_diff_list[q_idx]
 
         q_row = [
             "1 - اختيار من متعدد",
@@ -278,7 +283,7 @@ def generate_shilka_lesson_questions(lesson_title, lesson_idx, section_name):
     for q_idx in range(num_tf):
         tpl_tf, tf_ans = selected_tf[q_idx]
         tf_text = tpl_tf.format(topic=clean_topic)
-        assigned_diff = diff_schedule[num_mcq + q_idx]
+        assigned_diff = tf_diff_list[q_idx]
 
         q_row = [
             "2 - صح/خطأ",

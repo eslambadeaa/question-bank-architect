@@ -178,13 +178,30 @@ def generate_artillery_lesson_questions(lesson_title, lesson_idx, section_name, 
     """
     questions = []
     
-    diff_schedule = [
-        "1 - سهل", "1 - سهل", "1 - سهل", "1 - سهل", "1 - سهل", "1 - سهل", "1 - سهل",
-        "2 - متوسط", "2 - متوسط", "2 - متوسط", "2 - متوسط", "2 - متوسط", "2 - متوسط", "2 - متوسط", "2 - متوسط",
-        "3 - صعب", "3 - صعب", "3 - صعب", "3 - صعب",
-        "4 - صعب جدا", "4 - صعب جدا", "4 - صعب جدا", "4 - صعب جدا",
-        "5 - تفوق", "5 - تفوق"
+    # جداول الصعوبة الدقيقة الموزعة عبر 4 دروس لتحقيق نسب 30 - 30 - 15 - 15 - 10 بالتمام
+    # مع ضمان وجود كافة مستويات الصعوبة الخمسة داخل الاختيار من متعدد وداخل الصح والخطأ في كل درس
+    easy_k = "1 - سهل"
+    med_k = "2 - متوسط"
+    hard_k = "3 - صعب"
+    vhard_k = "4 - صعب جدا"
+    exc_k = "5 - تفوق"
+
+    difficulty_templates = [
+        # دورة 0: 13 MCQ (4 سهل، 4 متوسط، 2 صعب، 2 صعب جدا، 1 تفوق) + 12 TF (4 سهل، 3 متوسط، 2 صعب، 2 صعب جدا، 1 تفوق)
+        ([easy_k]*4 + [med_k]*4 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*1,
+         [easy_k]*4 + [med_k]*3 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*1),
+        # دورة 1: 12 MCQ (3 سهل، 4 متوسط، 2 صعب، 2 صعب جدا، 1 تفوق) + 13 TF (4 سهل، 4 متوسط، 2 صعب، 1 صعب جدا، 2 تفوق)
+        ([easy_k]*3 + [med_k]*4 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*1,
+         [easy_k]*4 + [med_k]*4 + [hard_k]*2 + [vhard_k]*1 + [exc_k]*2),
+        # دورة 2: 13 MCQ (4 سهل، 3 متوسط، 2 صعب، 2 صعب جدا، 2 تفوق) + 12 TF (4 سهل، 4 متوسط، 1 صعب، 2 صعب جدا، 1 تفوق)
+        ([easy_k]*4 + [med_k]*3 + [hard_k]*2 + [vhard_k]*2 + [exc_k]*2,
+         [easy_k]*4 + [med_k]*4 + [hard_k]*1 + [vhard_k]*2 + [exc_k]*1),
+        # دورة 3: 12 MCQ (4 سهل، 4 متوسط، 2 صعب، 1 صعب جدا، 1 تفوق) + 13 TF (3 سهل، 4 متوسط، 2 صعب، 3 صعب جدا، 1 تفوق)
+        ([easy_k]*4 + [med_k]*4 + [hard_k]*2 + [vhard_k]*1 + [exc_k]*1,
+         [easy_k]*3 + [med_k]*4 + [hard_k]*2 + [vhard_k]*3 + [exc_k]*1)
     ]
+    
+    mcq_diff_list, tf_diff_list = difficulty_templates[(lesson_idx - 1) % 4]
 
     # الحصول على المفهوم العسكري المركز
     if "إعدادي" in section_name or "اعدادي" in section_name:
@@ -283,8 +300,14 @@ def generate_artillery_lesson_questions(lesson_title, lesson_idx, section_name, 
         fresh_dists = [d for d in ARTILLERY_DISTRACTOR_POOL if d != correct_ans_base]
         chosen_dists = random.sample(fresh_dists, 3)
 
-        ans_letter = "A"
-        assigned_diff = diff_schedule[q_idx]
+        # تدوير موضع الإجابة الصحيحة بنمط منتظم ومتوازن عبر الأسئلة والدروس
+        ans_keys = ["A", "B", "C", "D"]
+        target_pos = (lesson_idx + q_idx) % 4
+        options = [correct_ans_base, chosen_dists[0], chosen_dists[1], chosen_dists[2]]
+        options[0], options[target_pos] = options[target_pos], options[0]
+        ans_letter = ans_keys[target_pos]
+
+        assigned_diff = mcq_diff_list[q_idx]
 
         q_row = [
             "1 - اختيار من متعدد",
@@ -292,10 +315,10 @@ def generate_artillery_lesson_questions(lesson_title, lesson_idx, section_name, 
             "", # الشرح فارغ تماماً
             assigned_diff,
             ans_letter,
-            correct_ans_base,
-            chosen_dists[0],
-            chosen_dists[1],
-            chosen_dists[2],
+            options[0],
+            options[1],
+            options[2],
+            options[3],
             lesson_title
         ]
         questions.append(q_row)
@@ -320,7 +343,7 @@ def generate_artillery_lesson_questions(lesson_title, lesson_idx, section_name, 
     for q_idx in range(num_tf):
         tpl_tf, tf_ans = tf_templates[q_idx]
         tf_text = tpl_tf.format(topic=concept_topic)
-        assigned_diff = diff_schedule[num_mcq + q_idx]
+        assigned_diff = tf_diff_list[q_idx]
 
         q_row = [
             "2 - صح/خطأ",
